@@ -1,0 +1,4 @@
+# Keep LF line endings in the repo on every OS. A CRLF shebang breaks `npx isoklo` on macOS and Linux.
+* text=auto eol=lf
+*.png binary
+*.ico binary

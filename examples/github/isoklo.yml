@@ -1,0 +1,30 @@
+# Copy this file to .github/workflows/isoklo.yml in your repository.
+# Then, in Settings → Branches (or Rules), require the "isoklo / check" status check, so GitHub refuses to merge
+# a pull request until Isoklo passes.
+name: isoklo
+
+on:
+  # pull_request, never pull_request_target: the gate must run with read-only access and no secrets,
+  # because it reads code written by an agent or a fork.
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: Isoklo compares the pull request with the point where it left the base branch.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Pin to a full commit SHA in production; tags can be moved.
+      - uses: isoklo/isoklo@v0
+        with:
+          # Optional: a maintainer adds the "isoklo-allow-config" label to accept a deliberate agent or CI config
+          # change. Restrict who can apply labels (triage access) if you rely on this.
+          allow-config-change: ${{ contains(github.event.pull_request.labels.*.name, 'isoklo-allow-config') && 'label isoklo-allow-config applied by a maintainer' || '' }}

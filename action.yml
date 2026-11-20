@@ -1,0 +1,60 @@
+name: Isoklo
+description: "Proof before merge. Blocks agent pull requests that weaken tests, add packages that don't exist, or widen agent and CI permissions."
+author: Isoklo
+branding:
+  icon: check-circle
+  color: gray-dark
+
+inputs:
+  version:
+    description: "isoklo version from npm, for example 0.1.0. Empty runs the copy of Isoklo inside this action, built on the runner."
+    required: false
+    default: ""
+  base:
+    description: "Branch or commit to compare against. Empty uses the pull request's base branch."
+    required: false
+    default: ""
+  offline:
+    description: "Set to true to skip package registry lookups (new packages are then reported as not verified)."
+    required: false
+    default: "false"
+  allow-config-change:
+    description: "A reason that turns blocked agent or CI configuration changes into review. Set it only from something agents cannot control, such as a label only maintainers can apply."
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      # Pin to a full commit SHA in production; tags can be moved.
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+
+    - name: Run Isoklo
+      shell: bash
+      # Inputs reach the script only through environment variables, never pasted into it with ${{ }}:
+      # a crafted input cannot inject shell commands.
+      env:
+        ISOKLO_VERSION: ${{ inputs.version }}
+        ISOKLO_BASE: ${{ inputs.base }}
+        ISOKLO_OFFLINE_INPUT: ${{ inputs.offline }}
+        ISOKLO_ALLOW_CONFIG: ${{ inputs.allow-config-change }}
+        ISOKLO_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        args=(check)
+        if [ -n "$ISOKLO_BASE" ]; then args+=(--base "$ISOKLO_BASE"); fi
+        if [ "$ISOKLO_OFFLINE_INPUT" = "true" ]; then args+=(--offline); fi
+        if [ -n "$ISOKLO_ALLOW_CONFIG" ]; then args+=(--allow-config-change "$ISOKLO_ALLOW_CONFIG"); fi
+        if [ -n "$ISOKLO_VERSION" ]; then
+          if ! [[ "$ISOKLO_VERSION" =~ ^[0-9A-Za-z.+-]+$ ]]; then
+            echo "::error title=Isoklo could not run::version input is not a valid version: nothing was approved."
+            exit 2
+          fi
+          npx --yes "isoklo@${ISOKLO_VERSION}" "${args[@]}"
+        else
+          (cd "$ISOKLO_ACTION_PATH" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm run build --silent >/dev/null)
+          node "$ISOKLO_ACTION_PATH/dist/cli.js" "${args[@]}"
+        fi
