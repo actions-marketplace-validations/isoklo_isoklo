@@ -1,5 +1,5 @@
 name: Isoklo
-description: "Proof before merge. Blocks agent pull requests that weaken tests, add packages that don't exist, or widen agent and CI permissions."
+description: 'Proof before merge. Blocks AI agent PRs that weaken tests, add fake packages, or escalate configs.'
 author: Isoklo
 branding:
   icon: check-circle
