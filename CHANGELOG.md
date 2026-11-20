@@ -2,6 +2,15 @@
 
 All notable changes to Isoklo are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.1.1 · 2026-11-20
+
+Documentation only; no code changes.
+- A fuller README: quick start, the GitHub setup in full, each check with examples, how to accept an intentional
+  change, what leaves your machine, limits and FAQ.
+- A live demo: four agent pull requests on [isoklo/isoklo-demo](https://github.com/isoklo/isoklo-demo), with
+  screenshots of a blocked pull request and of a finding on the exact lines.
+- Corrected: brand-new packages are flagged for review, not blocked.
+
 ## 0.1.0 · 2026-11-20
 
 First public release.

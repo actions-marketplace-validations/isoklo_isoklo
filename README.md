@@ -36,8 +36,27 @@ blocked · 2 problems must be fixed before merge.
 No model is asked for an opinion. Every check is a fixed rule, so the same change always gets the same verdict, and it
 runs in seconds.
 
+## Live demo
+Four agent pull requests on [isoklo/isoklo-demo](https://github.com/isoklo/isoklo-demo), left open as exhibits. Every
+one passes its unit tests; Isoklo blocks three of them.
+
+| Pull request | What the agent did | Unit Tests | Isoklo |
+|---|---|:---:|:---:|
+| [#1](https://github.com/isoklo/isoklo-demo/pull/1) | Deleted the assertions that caught its bug, and added `test.skip` | ✅ | ❌ blocked |
+| [#2](https://github.com/isoklo/isoklo-demo/pull/2) | Added an invented npm package, `invoice-pdf-renderer-lite` | ✅ | ❌ blocked |
+| [#3](https://github.com/isoklo/isoklo-demo/pull/3) | Quietly gave itself `Bash(*)` and `WebFetch(domain:*)` in `.claude/settings.json` | ✅ | ❌ blocked |
+| [#4](https://github.com/isoklo/isoklo-demo/pull/4) | Fixed a real bug, with regression tests | ✅ | ✅ passed |
+
+Pull request #1 cannot be merged, although its unit tests pass:
+
+![Pull request #1: the isoklo check is failing and required, so the merge button is disabled](https://raw.githubusercontent.com/isoklo/isoklo/main/docs/pr-blocked.png)
+
+The finding sits on the exact lines, in the pull request's diff:
+
+![Isoklo's annotation in the diff: 2 assertions removed, 1 added in their place, 1 check fewer](https://raw.githubusercontent.com/isoklo/isoklo/main/docs/pr-inline.png)
+
 ## Contents
-[Quick start](#quick-start) · [Add it to GitHub](#add-it-to-github) · [What it checks](#what-it-checks) ·
+[Live demo](#live-demo) · [Quick start](#quick-start) · [Add it to GitHub](#add-it-to-github) · [What it checks](#what-it-checks) ·
 [When a change is intentional](#when-a-change-is-intentional) · [isoklo doctor](#isoklo-doctor) ·
 [What leaves your machine](#what-leaves-your-machine) · [Reference](#reference) · [Limits](#limits) · [FAQ](#faq) ·
 [Licence](#licence)
@@ -262,7 +281,7 @@ Isoklo has no runtime dependencies: the npm package is its own code and nothing 
 {
   "tool": "isoklo",
   "command": "check",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "verdict": "passed",
   "base": "main",
   "head": "HEAD",
