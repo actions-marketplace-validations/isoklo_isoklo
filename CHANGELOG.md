@@ -2,6 +2,15 @@
 
 All notable changes to Isoklo are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.1.2 · 2026-11-21
+
+- **GitHub Action:** runs on `actions/setup-node@v7` (Node.js 24). GitHub now warns that v4 actions run on the
+  deprecated Node.js 20. Package caching is turned off in the action: Isoklo installs nothing from your repository,
+  and caching on untrusted pull requests is a cache-poisoning risk.
+- **Recommended workflow:** `actions/checkout@v7`.
+- **README:** a note for people arriving from the GitHub Marketplace, whose one-line snippet leaves out the full
+  history Isoklo needs.
+
 ## 0.1.1 · 2026-11-20
 
 Documentation only; no code changes.

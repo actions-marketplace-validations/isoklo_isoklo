@@ -76,7 +76,9 @@ CI system or git hook as it is.
 ## Add it to GitHub
 Two steps, about two minutes.
 
-**1. Add the workflow.** Save this as `.github/workflows/isoklo.yml`:
+**1. Add the workflow.** Save this as `.github/workflows/isoklo.yml`. (Coming from the GitHub Marketplace? Its snippet
+is only the `uses:` line. Use this complete workflow instead: Isoklo needs the full history, `fetch-depth: 0`, to
+compare a pull request with its base, and it only ever needs read access.)
 
 ```yaml
 name: isoklo
@@ -92,7 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full history: Isoklo compares the pull request with where it left the base branch
           persist-credentials: false
@@ -281,7 +283,7 @@ Isoklo has no runtime dependencies: the npm package is its own code and nothing 
 {
   "tool": "isoklo",
   "command": "check",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "verdict": "passed",
   "base": "main",
   "head": "HEAD",
