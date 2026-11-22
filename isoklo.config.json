@@ -1,0 +1,13 @@
+{
+  "$schema": "./schema/isoklo.config.schema.json",
+  "scope": {
+    "allow": [],
+    "deny": []
+  },
+  "rules": {},
+  "ignorePaths": [
+    "test/**",
+    "apps/github-app/test/**"
+  ],
+  "baseline": []
+}

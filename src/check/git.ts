@@ -111,7 +111,8 @@ export async function showFile(cwd: string, rev: string, path: string): Promise<
   try {
     return await git(cwd, ["show", `${rev}:${path}`]);
   } catch (error) {
-    if (error instanceof GitError && /(does not exist|exists on disk, but not in|bad revision|invalid object name)/i.test(error.message)) {
+    // "unknown revision or path not in the working tree": reading `:path` from the index when the file is not staged.
+    if (error instanceof GitError && /(does not exist|exists on disk, but not in|bad revision|invalid object name|unknown revision or path not in the working tree)/i.test(error.message)) {
       return null;
     }
     throw error;

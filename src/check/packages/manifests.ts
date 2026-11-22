@@ -13,6 +13,8 @@ export interface DeclaredPackage {
   /** The line in the new manifest that declares it (1-based), for evidence. */
   line: number;
   text: string;
+  /** npm: the declared version when it is exact (1.2.3), so the registry answer is about that version. */
+  exactVersion?: string;
 }
 
 export interface ManifestFacts {
@@ -62,10 +64,13 @@ export function npmPackages(text: string): ManifestFacts | null {
       const spec = typeof specRaw === "string" ? specRaw.trim() : "";
       if (NON_REGISTRY.test(spec) || GITHUB_SHORTHAND.test(spec)) continue;
       // "alias": "npm:real-name@^1.0.0" installs real-name.
-      const alias = /^npm:((?:@[^/@\s]+\/)?[^@\s]+)/.exec(spec);
+      const alias = /^npm:((?:@[^/@\s]+\/)?[^@\s]+)(?:@(.*))?/.exec(spec);
       const name = alias?.[1] ?? key;
       const where = lineOf(text, new RegExp(`"${escapeRe(key)}"\\s*:`));
-      packages.set(name, { ecosystem: "npm", name, ...where });
+      const version = (alias ? alias[2] ?? "" : spec).replace(/^=/, "");
+      const declared: DeclaredPackage = { ecosystem: "npm", name, ...where };
+      if (/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version)) declared.exactVersion = version;
+      packages.set(name, declared);
     }
   }
   return { packages, privateIndex: false };

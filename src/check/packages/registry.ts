@@ -17,6 +17,10 @@ export interface Lookup {
   /** ISO date of the first publish, when known. */
   createdAt?: string;
   weeklyDownloads?: number;
+  /** npm: the checked version (the declared exact version, else latest) runs preinstall, install or postinstall. */
+  hasInstallScript?: boolean;
+  /** npm: the version the install-script answer is about. */
+  version?: string;
   /** For unverified: what went wrong, in plain words. */
   detail?: string;
   /** When this answer was obtained: registries change, so every answer is dated. */
@@ -53,7 +57,23 @@ const unverified = (ecosystem: Ecosystem, name: string, detail: string, checkedA
 
 const statusDetail = (s: number) => (s === 429 ? "the registry is rate-limiting requests (429)" : `the registry answered ${s}`);
 
-export async function lookupNpm(name: string, f: FetchLike, now: Date): Promise<Lookup> {
+/**
+ * From npm's abbreviated (install) document: which version to judge, and whether it runs an install script. npm sets
+ * `hasInstallScript` on versions whose package.json has preinstall, install or postinstall.
+ */
+export function installScriptOf(doc: unknown, exactVersion: string | undefined): { version?: string; hasInstallScript?: boolean } {
+  if (typeof doc !== "object" || doc === null) return {};
+  const d = doc as { "dist-tags"?: { latest?: unknown }; versions?: Record<string, { hasInstallScript?: unknown }> };
+  const version = exactVersion !== undefined && d.versions?.[exactVersion] !== undefined
+    ? exactVersion
+    : typeof d["dist-tags"]?.latest === "string" ? d["dist-tags"].latest : undefined;
+  if (version === undefined) return {};
+  const v = d.versions?.[version];
+  if (v === undefined) return { version };
+  return { version, hasInstallScript: v.hasInstallScript === true };
+}
+
+export async function lookupNpm(name: string, f: FetchLike, now: Date, exactVersion?: string): Promise<Lookup> {
   const checkedAt = now.toISOString();
   const base = `https://registry.npmjs.org/${npmPath(name)}`;
   // The abbreviated document is small even for huge packages: enough to know the package exists.
@@ -63,6 +83,9 @@ export async function lookupNpm(name: string, f: FetchLike, now: Date): Promise<
   if (head.res.status !== 200) return unverified("npm", name, statusDetail(head.res.status), checkedAt);
 
   const result: Lookup = { ecosystem: "npm", name, status: "exists", checkedAt };
+  const scripts = installScriptOf(await safeJson(head.res), exactVersion);
+  if (scripts.version !== undefined) result.version = scripts.version;
+  if (scripts.hasInstallScript !== undefined) result.hasInstallScript = scripts.hasInstallScript;
   const dl = await get(f, `https://api.npmjs.org/downloads/point/last-week/${name}`);
   if (dl.res?.status === 200) {
     const body = (await safeJson(dl.res)) as { downloads?: unknown } | null;
@@ -94,7 +117,7 @@ export async function lookupPypi(name: string, f: FetchLike, now: Date): Promise
 
 /** Look up many packages, at most `limit` at a time, each name once. */
 export async function lookupAll(
-  wanted: { ecosystem: Ecosystem; name: string }[],
+  wanted: { ecosystem: Ecosystem; name: string; exactVersion?: string }[],
   f: FetchLike,
   now: Date,
   limit = 4,
@@ -105,8 +128,8 @@ export async function lookupAll(
   let next = 0;
   const worker = async () => {
     while (next < unique.length) {
-      const w = unique[next++] as { ecosystem: Ecosystem; name: string };
-      const l = w.ecosystem === "npm" ? await lookupNpm(w.name, f, now) : await lookupPypi(w.name, f, now);
+      const w = unique[next++] as { ecosystem: Ecosystem; name: string; exactVersion?: string };
+      const l = w.ecosystem === "npm" ? await lookupNpm(w.name, f, now, w.exactVersion) : await lookupPypi(w.name, f, now);
       out.set(key(w.ecosystem, w.name), l);
     }
   };

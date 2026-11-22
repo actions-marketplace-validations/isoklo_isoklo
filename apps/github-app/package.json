@@ -1,0 +1,31 @@
+{
+  "name": "isoklo-github-app",
+  "version": "0.2.0",
+  "private": true,
+  "description": "The Isoklo GitHub App: a deterministic merge gate on every pull request, with no workflow files. Cloudflare Workers and Hono.",
+  "license": "FSL-1.1-ALv2",
+  "type": "module",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test \"test/**/*.test.js\"",
+    "simulate": "npm run build && node scripts/simulate.mjs",
+    "register": "node scripts/register.mjs",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check:bundle": "wrangler deploy --dry-run --outdir .wrangler/bundle"
+  },
+  "dependencies": {
+    "hono": "4.13.19",
+    "isoklo": "file:../.."
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261121.1",
+    "typescript": "5.9.3",
+    "wrangler": "4.166.0"
+  }
+}

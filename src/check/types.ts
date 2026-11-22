@@ -1,6 +1,15 @@
-/** Shapes shared by every `isoklo check` rule, so the report and JSON output treat all rules the same way. */
+/** Shapes shared by every Isoklo rule, so the reports, JSON, SARIF and receipts treat all rules the same way. */
 
 export type Level = "blocked" | "review" | "info";
+
+/** How serious the problem is, independent of whether it blocks. Shown in reports, SARIF and receipts. */
+export type Severity = "critical" | "high" | "medium" | "info";
+
+/** The v2 rule suites. Every rule id is `<suite>/<name>`, for example `tamper/assertions-removed`. */
+export type Suite = "agent" | "mcp" | "tamper" | "deps" | "sec" | "scope";
+
+/** v1 rule groups keep their names so v1 JSON consumers keep working; new rules use their suite as the group. */
+export type RuleGroup = "weakened-tests" | "unknown-packages" | "agent-config" | Suite;
 
 export interface Evidence {
   path: string;
@@ -14,19 +23,25 @@ export interface Evidence {
 }
 
 export interface Finding {
-  rule: "weakened-tests" | "unknown-packages" | "agent-config";
+  rule: RuleGroup;
   id: string;
   level: Level;
   /** Verdict first, in the examiner voice. */
   message: string;
   fix: string;
   evidence: Evidence[];
-  /** Set when a reviewable allow marker downgraded this finding. */
+  /** Set when a reviewable allow marker, a maintainer's reason, or the baseline downgraded this finding. */
   allowedBecause?: string;
+  /** v2: the canonical rule id (`suite/name`). The engine fills it in from the rule registry. */
+  ruleId?: string;
+  /** v2: how serious it is. The engine fills it in from the rule registry when a rule does not set it. */
+  severity?: Severity;
+  /** v2: stable id for this finding (rule, file and evidence text, not line numbers), for baselines and SARIF. */
+  fingerprint?: string;
 }
 
 export interface RuleResult {
-  rule: Finding["rule"];
+  rule: RuleGroup;
   findings: Finding[];
   /** Plain statements of what was checked and found fine. */
   passes: string[];

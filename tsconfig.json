@@ -13,7 +13,7 @@
     "resolveJsonModule": false,
     "skipLibCheck": true,
     "sourceMap": false,
-    "declaration": false,
+    "declaration": true,
     "newLine": "lf",
     "types": ["node"]
   },

@@ -1,0 +1,24 @@
+# The Isoklo GitHub App on Cloudflare Workers.
+# Secrets (never in this file): wrangler secret put GITHUB_APP_PRIVATE_KEY, GITHUB_WEBHOOK_SECRET,
+# RECEIPT_SIGNING_KEY, STRIPE_WEBHOOK_SECRET. See README.md.
+name = "isoklo-github-app"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+[vars]
+GITHUB_APP_ID = ""            # from the app's settings page, after registration
+APP_SLUG = "isoklo"
+PUBLIC_URL = "https://github.com/isoklo/isoklo"
+UPGRADE_URL = "https://github.com/marketplace/isoklo"
+BILLING_MODE = "off"          # "off": everyone gets every feature (launch). "on": plans are enforced.
+ONLINE = "true"               # look new packages up on npm and PyPI
+COMMENT_ON_PASS = "false"     # post a pull request comment only when there is something to say
+# LICENSES = '{"acme": "team"}'                     # manual licences by account login or id
+# STRIPE_PRICE_PLANS = '{"price_123": "pro", "price_456": "team"}'
+# MARKETPLACE_PLAN_MAP = '{"Pro": "pro", "Team": "team"}'
+
+# Plan records, installation records, stored receipts and webhook de-duplication.
+# Create it with: wrangler kv namespace create ISOKLO_KV   (then paste the id below)
+[[kv_namespaces]]
+binding = "ISOKLO_KV"
+id = "00000000000000000000000000000000"

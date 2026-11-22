@@ -2,7 +2,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CLI = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
@@ -33,10 +35,18 @@ test("--help prints usage with the tagline and the exit-code contract", () => {
   assert.match(r.out, /2 {2}could not run/);
 });
 
-test("no arguments shows help and passes", () => {
-  const r = run();
-  assert.equal(r.code, 0);
-  assert.match(r.out, /Usage/);
+test("v2: no arguments scans the current folder, with no setup", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "isoklo-noargs-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, "index.js"), "export const add = (a, b) => a + b;\n");
+  const r = spawnSync(process.execPath, [CLI], { cwd: dir, encoding: "utf8", env: { ...process.env, NO_COLOR: "1", GIT_CEILING_DIRECTORIES: tmpdir() } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^isoklo scan · isoklo-noargs-\w+ · 1 file read/);
+  assert.match(r.stdout, /passed\./);
+});
+
+test("--help prints usage", () => {
+  assert.match(run("--help").out, /Usage/);
 });
 
 test("an unknown command cannot run: exit 2, message on stderr, nothing on stdout", () => {

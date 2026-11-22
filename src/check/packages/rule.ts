@@ -7,7 +7,8 @@
  *   - Registry unreachable or offline: review or info, never a silent pass and never a false block.
  */
 import { addedPackages, manifestKind, readManifest, type DeclaredPackage } from "./manifests.js";
-import { lookupAll, lookupKey, type FetchLike, type Lookup } from "./registry.js";
+import { LOW_DOWNLOADS, lookupAll, lookupKey, type FetchLike, type Lookup } from "./registry.js";
+import { typosquatOf } from "../../rules/deps/typosquat.js";
 import type { Finding, RuleResult } from "../types.js";
 
 export const NEW_PACKAGE_DAYS = 30;
@@ -28,6 +29,11 @@ export interface PackageRuleOptions {
   privateNpmScopes: Set<string>;
   /** .npmrc replaces the default registry entirely. */
   customNpmRegistry: boolean;
+  /**
+   * Most packages to look up in one change (default 100). Beyond it the rest are reported as not verified (review):
+   * never silently passed. The GitHub App sets a lower limit to stay inside a Worker's request budget.
+   */
+  maxLookups?: number;
 }
 
 /** Scopes and registries configured in an .npmrc file. */
@@ -84,6 +90,19 @@ export async function unknownPackages(changes: ManifestChange[], opts: PackageRu
     return { rule: "unknown-packages", findings, passes, stats: { packagesAdded: 0 } };
   }
 
+  // v2: names one typo away from a popular package. Works offline, so it runs before any lookup.
+  const typosquats: Finding[] = [];
+  for (const p of toCheck) {
+    const imitates = typosquatOf(p.ecosystem, p.name);
+    if (imitates === null) continue;
+    typosquats.push({
+      rule: "unknown-packages", id: "typosquat", level: "review", severity: "high",
+      message: `Possible typo-squat: ${p.name} is one character away from the popular ${where(p.ecosystem)} package ${imitates}.`,
+      fix: `if you meant ${imitates}, fix the name; if ${p.name} is intended, confirm who publishes it.`,
+      evidence: [{ path: p.path, line: p.line, text: p.text }],
+    });
+  }
+
   // 2. Offline: say plainly that nothing was verified.
   if (opts.offline) {
     findings.push({
@@ -92,11 +111,26 @@ export async function unknownPackages(changes: ManifestChange[], opts: PackageRu
       fix: "run without --offline to confirm they exist.",
       evidence: toCheck.map((p) => ({ path: p.path, line: p.line, text: p.text })),
     });
+    findings.push(...typosquats);
     return { rule: "unknown-packages", findings, passes, stats: { packagesAdded: added.length } };
   }
 
-  // 3. Ask the registries (public names only).
-  const answers = await lookupAll(toCheck.map((p) => ({ ecosystem: p.ecosystem, name: p.name })), opts.fetch, opts.now);
+  // 3. Ask the registries (public names only), up to the lookup budget.
+  const budget = Math.max(0, opts.maxLookups ?? 100);
+  const looked = toCheck.slice(0, budget);
+  const overflow = toCheck.slice(budget);
+  const answers = await lookupAll(
+    looked.map((p) => (p.exactVersion === undefined ? { ecosystem: p.ecosystem, name: p.name } : { ecosystem: p.ecosystem, name: p.name, exactVersion: p.exactVersion })),
+    opts.fetch, opts.now,
+  );
+  if (overflow.length > 0) {
+    findings.push({
+      rule: "unknown-packages", id: "package-unverified", level: "review",
+      message: `${plural(overflow.length, "new package")} not looked up: this change adds more than ${budget}, the most Isoklo checks against the registries in one run.`,
+      fix: "split the change, or run `npx isoklo check` locally, where the limit is higher, to verify the rest.",
+      evidence: overflow.map((p) => ({ path: p.path, line: p.line, text: p.text })),
+    });
+  }
   const ageDays = (l: Lookup) =>
     l.createdAt === undefined ? null : Math.floor((opts.now.getTime() - Date.parse(l.createdAt)) / 86_400_000);
 
@@ -133,17 +167,44 @@ export async function unknownPackages(changes: ManifestChange[], opts: PackageRu
       continue;
     }
     const days = ageDays(l);
-    if (days !== null && days < NEW_PACKAGE_DAYS) {
+    const brandNew = days !== null && days < NEW_PACKAGE_DAYS;
+    const fewDownloads = l.weeklyDownloads !== undefined && l.weeklyDownloads < LOW_DOWNLOADS;
+    // v2: install scripts run with full access on npm install; on a new or little-used package that is malware's shape.
+    if (l.hasInstallScript === true) {
+      const risky = brandNew || fewDownloads;
+      findings.push({
+        rule: "unknown-packages", id: "install-script", level: risky ? "blocked" : "review", severity: risky ? "critical" : "medium",
+        message: `New package runs code on install: ${p.name}${l.version ? `@${l.version}` : ""} has a preinstall, install or postinstall script` +
+          (risky ? `, and it is ${[brandNew ? `${days === 0 ? "published today" : `${plural(days ?? 0, "day")} old`}` : "", fewDownloads ? `downloaded ${plural(l.weeklyDownloads ?? 0, "time")} last week` : ""].filter(Boolean).join(" and ")}.` : "."),
+        fix: risky
+          ? "do not install it until someone has read its install script; prefer an established package, or install with --ignore-scripts."
+          : "read what the script does; established packages often build native code this way.",
+        evidence: ev,
+      });
+    }
+    if (brandNew) {
       findings.push({
         rule: "unknown-packages", id: "package-brand-new", level: "review",
-        message: `Brand-new package: ${p.name} was first published on ${where(p.ecosystem)} ${days === 0 ? "today" : `${plural(days, "day")} ago`}.`,
+        message: `Brand-new package: ${p.name} was first published on ${where(p.ecosystem)} ${days === 0 ? "today" : `${plural(days, "day")} ago`}` +
+          `${l.weeklyDownloads !== undefined ? `, with ${plural(l.weeklyDownloads, "download")} last week` : ""}.`,
         fix: "confirm it is the package you meant and who publishes it before merging.",
         evidence: ev,
       });
       continue;
     }
-    fine++;
+    // The package exists, but its age could not be read and nothing says it is widely used: do not claim it is old.
+    if (days === null && (l.weeklyDownloads === undefined || l.weeklyDownloads < LOW_DOWNLOADS)) {
+      findings.push({
+        rule: "unknown-packages", id: "package-unverified", level: "review",
+        message: `Could not confirm when ${p.name} was first published on ${where(p.ecosystem)}${l.weeklyDownloads !== undefined ? `, and it was downloaded ${plural(l.weeklyDownloads, "time")} last week` : ""}.`,
+        fix: "check the package's page and publisher before merging, or run the check again.",
+        evidence: ev,
+      });
+      continue;
+    }
+    if (l.hasInstallScript !== true) fine++;
   }
+  findings.push(...typosquats);
 
   if (fine > 0) passes.push(`${plural(fine, "new package")} found on ${[...new Set(toCheck.map((p) => where(p.ecosystem)))].join(" and ")}, older than ${NEW_PACKAGE_DAYS} days.`);
   if (skippedCount > 0) passes.push(`${plural(skippedCount, "package")} in private scopes from .npmrc, not sent to the public registry.`);
