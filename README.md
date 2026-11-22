@@ -420,7 +420,8 @@ they exist and whether they run install scripts.
 - Packages in private npm scopes from `.npmrc` are never looked up. `--offline` turns lookups off.
 - No telemetry, no account, no API key. The npm package has no runtime dependencies.
 - The GitHub App reads a pull request's changed files through GitHub's API inside the Worker and stores nothing of
-  your code. It keeps plan records and, on Team, receipts (fingerprints, never code).
+  your code. It keeps plan and installation records and, on Team, receipts for 400 days (rule, file, line and
+  fingerprint, never code). While billing is off, as at launch, every installation gets Team, so receipts are kept for all.
 
 ## Reference
 
