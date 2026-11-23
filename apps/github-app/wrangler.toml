@@ -6,7 +6,7 @@ main = "src/index.ts"
 compatibility_date = "2026-11-01"
 
 [vars]
-GITHUB_APP_ID = ""            # from the app's settings page, after registration
+GITHUB_APP_ID = "5884420"            # from the app's settings page, after registration
 APP_SLUG = "isoklo"
 PUBLIC_URL = "https://github.com/isoklo/isoklo"
 UPGRADE_URL = "https://github.com/marketplace/isoklo"
@@ -21,4 +21,4 @@ COMMENT_ON_PASS = "false"     # post a pull request comment only when there is s
 # Create it with: wrangler kv namespace create ISOKLO_KV   (then paste the id below)
 [[kv_namespaces]]
 binding = "ISOKLO_KV"
-id = "00000000000000000000000000000000"
+id = "f82c096e24054166a67331f8fff9684b"
