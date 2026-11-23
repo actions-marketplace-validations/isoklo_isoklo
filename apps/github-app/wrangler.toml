@@ -1,6 +1,8 @@
 # The Isoklo GitHub App on Cloudflare Workers.
 # Secrets (never in this file): wrangler secret put GITHUB_APP_PRIVATE_KEY, GITHUB_WEBHOOK_SECRET,
-# RECEIPT_SIGNING_KEY, STRIPE_WEBHOOK_SECRET. See README.md.
+# RECEIPT_SIGNING_KEY, STRIPE_WEBHOOK_SECRET. Optional, for receipts anyone can verify:
+#   npx isoklo keygen 2>/dev/null | npx wrangler secret put RECEIPT_SIGNING_JWK
+# See README.md.
 name = "isoklo-github-app"
 main = "src/index.ts"
 compatibility_date = "2026-11-01"
@@ -9,13 +11,13 @@ compatibility_date = "2026-11-01"
 GITHUB_APP_ID = "5884420"            # from the app's settings page, after registration
 APP_SLUG = "isoklo"
 PUBLIC_URL = "https://github.com/isoklo/isoklo"
-UPGRADE_URL = "https://github.com/marketplace/isoklo"
+UPGRADE_URL = "https://euklo.com/isoklo/#pricing"   # a Stripe Payment Link or the Marketplace listing, once live
 BILLING_MODE = "off"          # "off": everyone gets every feature (launch). "on": plans are enforced.
 ONLINE = "true"               # look new packages up on npm and PyPI
 COMMENT_ON_PASS = "false"     # post a pull request comment only when there is something to say
-# LICENSES = '{"acme": "team"}'                     # manual licences by account login or id
-# STRIPE_PRICE_PLANS = '{"price_123": "pro", "price_456": "team"}'
-# MARKETPLACE_PLAN_MAP = '{"Pro": "pro", "Team": "team"}'
+# LICENSES = '{"acme": "team", "bigco": "enterprise"}'   # licences sold by hand, by account login or id
+# STRIPE_PRICE_PLANS = '{"price_123": "team", "price_456": "enterprise"}'
+# MARKETPLACE_PLAN_MAP = '{"Team": "team", "Enterprise": "enterprise"}'
 
 # Plan records, installation records, stored receipts and webhook de-duplication.
 # Create it with: wrangler kv namespace create ISOKLO_KV   (then paste the id below)

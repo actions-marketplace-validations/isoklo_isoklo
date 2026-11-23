@@ -25,6 +25,9 @@ jobs:
       # Pin to a full commit SHA in production; tags can be moved.
       - uses: isoklo/isoklo@v0
         with:
-          # Optional: a maintainer adds the "isoklo-allow-config" label to accept a deliberate agent or CI config
-          # change. Restrict who can apply labels (triage access) if you rely on this.
+          # Optional: a maintainer adds a label to accept a deliberate change, and the reason shows in the check.
+          # "isoklo-allow-config" accepts agent or CI configuration changes; "isoklo-allow-tests" accepts deleted or
+          # skipped tests. Restrict who can apply labels (triage access) if you rely on these. A comment written in the
+          # change itself never accepts anything: an agent could write one.
           allow-config-change: ${{ contains(github.event.pull_request.labels.*.name, 'isoklo-allow-config') && 'label isoklo-allow-config applied by a maintainer' || '' }}
+          allow-test-change: ${{ contains(github.event.pull_request.labels.*.name, 'isoklo-allow-tests') && 'label isoklo-allow-tests applied by a maintainer' || '' }}

@@ -152,6 +152,26 @@ export class GitHub {
     }
   }
 
+  /**
+   * A person's access to a repository, as GitHub reports it: "admin", "write" (which includes maintain), "read" (which
+   * includes triage) or "none". Waivers need write or admin.
+   */
+  async collaboratorPermission(token: string, repo: string, login: string): Promise<"admin" | "write" | "read" | "none"> {
+    const r = await this.call<{ permission?: string }>(this.auth(token), "GET", `/repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`);
+    const p = r.status === 404 ? "none" : r.data?.permission;
+    return p === "admin" || p === "write" || p === "read" ? p : "none";
+  }
+
+  /** A plain reply on a pull request (waiver answers); the summary comment uses upsertComment. */
+  async createComment(token: string, repo: string, number: number, bodyText: string): Promise<void> {
+    await this.call(this.auth(token), "POST", `/repos/${repo}/issues/${number}/comments`, { body: bodyText });
+  }
+
+  /** React to a comment: 👍 when a waiver is recorded. Best effort. */
+  async addReaction(token: string, repo: string, commentId: number, content: "+1" | "-1" | "eyes"): Promise<void> {
+    await this.call(this.auth(token), "POST", `/repos/${repo}/issues/comments/${commentId}/reactions`, { content });
+  }
+
   /** Pull requests a commit belongs to: re-runs on fork pull requests carry no pull_requests list, only the head SHA. */
   async pullsForCommit(token: string, repo: string, sha: string): Promise<number[]> {
     const r = await this.call<{ number: number; state?: string }[]>(this.auth(token), "GET", `/repos/${repo}/commits/${encodeURIComponent(sha)}/pulls`);
@@ -193,6 +213,8 @@ export interface PullRequest {
   changed_files?: number;
   body?: string | null;
   html_url?: string;
+  /** Who opened it. An author may not waive their own pull request's findings unless the policy allows it. */
+  user?: { login: string; type?: string };
   base: { sha: string; ref: string };
   head: { sha: string; ref: string };
 }

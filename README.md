@@ -3,32 +3,43 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/isoklo/isoklo/main/brand/launch-kit/badge-passed.svg" alt="isoklo: passed">
-  <img src="https://raw.githubusercontent.com/isoklo/isoklo/main/brand/launch-kit/badge-review.svg" alt="isoklo: review">
-  <img src="https://raw.githubusercontent.com/isoklo/isoklo/main/brand/launch-kit/badge-blocked.svg" alt="isoklo: blocked">
+  <a href="https://www.npmjs.com/package/isoklo"><img src="https://img.shields.io/npm/v/isoklo?label=npm&color=11100E" alt="isoklo on npm"></a>
+  <a href="https://github.com/apps/isoklo"><img src="https://img.shields.io/badge/GitHub%20App-install-11100E?logo=github" alt="Install the Isoklo GitHub App"></a>
+  <a href="LICENSE.md"><img src="https://img.shields.io/badge/licence-FSL--1.1--ALv2-11100E" alt="Licence: FSL-1.1-ALv2"></a>
+  <img src="https://img.shields.io/badge/runtime%20dependencies-0-11100E" alt="No runtime dependencies">
 </p>
 
 # Isoklo
 
-**Proof before merge.** A deterministic merge gate for AI-written pull requests.
+**Your unit tests passed. The agent deleted the assertions. Isoklo blocks it in 2 seconds.**
 
-Coding agents are rewarded for a green build, so they sometimes get one the wrong way: they skip the failing test,
-loosen `tsconfig`, invent a package name, pre-approve `Bash(*)` for themselves, or follow an instruction hidden in a
-rules file. Isoklo catches those changes before a person spends time on them, and blocks the merge with the exact line
-as evidence. It uses fixed rules, not a model, so the same change always gets the same verdict, in seconds.
+A deterministic merge gate for AI-written pull requests. Coding agents are rewarded for a green build, so they
+sometimes get one the wrong way: they delete the assertion that caught their bug, skip the failing test, loosen
+`tsconfig`, invent a package name, pre-approve `Bash(*)` for themselves, or follow an instruction hidden in a rules
+file. Isoklo blocks those changes with the exact line as evidence. Fixed rules, no model: the same change always gets
+the same verdict.
+
+**[Install the GitHub App](https://github.com/apps/isoklo)** (free for public repositories, no YAML) ·
+[See a live blocked pull request](https://github.com/isoklo/isoklo-demo/pull/1) · [euklo.com/isoklo](https://euklo.com/isoklo) ·
+[Pricing](https://euklo.com/isoklo/#pricing)
+
+<p align="center">
+  <a href="https://github.com/isoklo/isoklo-demo/pull/1"><img src="https://raw.githubusercontent.com/isoklo/isoklo/main/docs/assets/required-check.png" alt="isoklo-demo pull request 1: Unit Tests pass in 5 seconds; the required isoklo check blocks the merge after 2 seconds with 2 problems to fix." width="100%"></a>
+</p>
 
 ```console
-npx isoklo
+npx isoklo@latest check
 ```
 
-That is the whole setup: it scans the repository you are in, with no account, no config file and no YAML.
+That is the whole local setup: it judges the branch you are on against its base, with no account, no config file and
+no YAML. `npx isoklo@latest` with no command scans the repository as it is.
 
 ## Contents
 [30 seconds](#30-seconds) · [What it catches](#what-it-catches) · [Add it to every pull request](#add-it-to-every-pull-request) ·
 [Commands](#commands) · [Rules](#rules) · [Scope](#scope-keep-agents-on-task) · [Policy](#policy-isokloconfigjson) ·
-[Audit report](#the-audit-report) · [Evidence receipts](#evidence-receipts) · [GitHub App](#the-github-app) ·
-[When a change is intentional](#when-a-change-is-intentional) · [What leaves your machine](#what-leaves-your-machine) ·
-[Reference](#reference) · [Limits](#limits) · [FAQ](#faq) · [Licence](#licence)
+[False positives and waivers](#false-positives-and-waivers) · [Evidence receipts](#evidence-receipts) ·
+[GitHub App](#the-github-app) · [Security and privacy](#security-and-privacy) · [Audit report](#the-audit-report) ·
+[Reference](#reference) · [Limits](#limits) · [FAQ](#faq) · [Live demo](#live-demo) · [Pricing and licence](#pricing-and-licence)
 
 ## 30 seconds
 
@@ -79,14 +90,15 @@ fix it. Secrets are masked to their first four characters everywhere Isoklo writ
 | **Slopsquatting** (`deps/*`) | packages that do not exist (hallucinated), brand-new or little-used packages with install scripts, typo-squats (`expresss`), lockfile entries from untrusted hosts, `postinstall: curl … \| sh`, registry and index changes |
 | **Secrets and exfiltration** (`sec/*`) | AWS, GitHub, OpenAI, Anthropic, Stripe, Slack, Google, npm and Hugging Face keys, Supabase `service_role` JWTs, private keys, committed `.env` files, `curl \| sh`, `JSON.stringify(process.env)` sent out, `pull_request_target` checking out PR code, `${{ github.event.pull_request.title }}` in `run:` |
 | **Scope** (`scope/*`) | files outside the task's declared scope, forbidden areas, oversized changes, auth or billing changed alongside unrelated work |
-| **Evidence** | a canonical JSON receipt of every run with a SHA-256 digest, HMAC-signed on paid plans |
+| **Evidence** | a canonical JSON receipt of every run with a SHA-256 digest and an Ed25519 signature anyone can check with `npx isoklo verify` |
 
 ## Add it to every pull request
 Pick one. All three run the same engine.
 
-**1. The GitHub App: no YAML at all.** Install Isoklo on a repository or a whole organisation; every pull request gets
-an `isoklo` check with line annotations and one summary comment that updates in place. Free for public repositories.
-See [The GitHub App](#the-github-app).
+**1. [The GitHub App](https://github.com/apps/isoklo): no YAML at all.** Install Isoklo on a repository or a whole
+organisation; every pull request gets an `isoklo` check in about 2 seconds, with one annotation per line and rule, and
+one summary comment that updates in place. Then require it once: **Settings → Rules → Rulesets → Require status checks
+→ `isoklo`**, and GitHub refuses to merge until it passes. See [The GitHub App](#the-github-app).
 
 **2. One command.** In your repository:
 
@@ -123,10 +135,11 @@ Rulesets** (or run `npx isoklo init --require`).
 
 | Input | Default | What it does |
 |---|---|---|
-| `version` | *(empty)* | Run this version from npm, for example `0.2.0`. Empty runs the copy inside the action. |
+| `version` | *(empty)* | Run this version from npm, for example `0.3.0`. Empty runs the copy inside the action. |
 | `base` | *(empty)* | Branch or commit to compare against. Empty uses the pull request's base branch. |
 | `offline` | `false` | `true` skips the package registry lookups. |
 | `allow-config-change` | *(empty)* | A reason that turns blocked configuration changes into review. Set it only from something agents cannot control, such as a label only maintainers can apply. |
+| `allow-test-change` | *(empty)* | The same for deleted, skipped or weakened tests, for example from an `isoklo-allow-tests` label. A reason written inside the change never counts. |
 | `scope` | *(empty)* | Globs the change may touch, separated by commas. The pull request body can also declare scope. |
 | `sarif` | *(empty)* | Also write SARIF here, for `github/codeql-action/upload-sarif` (findings in the Security tab). |
 
@@ -144,8 +157,9 @@ For the strongest guarantee, pin the action to a full commit SHA instead of `@v0
 | `isoklo init` | Set up a hook, CI and a baseline policy in one command. |
 | `isoklo doctor` | Agent instruction files, plus the repository's AI-agent security posture, graded A to F. |
 | `isoklo report --html audit.html` | A standalone executive audit report, ready to print to PDF. |
-| `isoklo verify isoklo-receipt.json` | Check a receipt's digest, and its signature with `ISOKLO_RECEIPT_KEY`. |
+| `isoklo verify receipt.json` | Check a receipt: its SHA-256 digest, its signature, and whether an Ed25519 signing key is one you trust (by default, the GitHub App's). |
 | `isoklo rules` | Every rule, with its severity and what it stops (`--json` for tooling). |
+| `isoklo keygen` | A new Ed25519 key for signing receipts in CI: the private key on stdout, the public key set on stderr. |
 
 Output for people by default; `--json` for machines; `--sarif <file>` for GitHub Code Scanning; `--receipt <file>`
 for audit trails; `--html <file>` for the report. In GitHub Actions, `check` also annotates the changed lines and writes
@@ -287,7 +301,8 @@ Optional. `npx isoklo init --config` writes one with today's findings as the bas
   "ignorePaths": ["test/fixtures/**"],
   "trustedRegistries": ["npm.internal.acme.dev"],
   "trustedMcpPackages": ["@acme/"],
-  "baseline": ["3f9c2a71d04e8b65"]
+  "baseline": ["3f9c2a71d04e8b65"],
+  "waivers": { "allowAuthor": false }
 }
 ```
 
@@ -299,6 +314,11 @@ Optional. `npx isoklo init --config` writes one with today's findings as the bas
 | `baseline` | Fingerprints of accepted findings; they report as info. Leaked secrets are never baselined. |
 | `trustedRegistries`, `trustedMcpPackages` | Your private registry hosts and MCP publishers. |
 | `online` | `false` turns the npm and PyPI lookups off. |
+| `waivers.allowAuthor` | GitHub App: let a pull request's own author waive its findings. Off by default; turn it on for a repository with a single maintainer. |
+
+One policy format, on purpose: JSON with comments, validated by a published JSON Schema (your editor completes it).
+There is no YAML parser in the gate's trust path. On the App's Team plan, an organisation's own `isoklo.config.json` in
+its `.github` repository applies to every repository and wins wherever it speaks.
 
 **The policy cannot be loosened by the change it judges.** `check` reads it from the base commit, never from the pull
 request, and a change that edits it is itself a finding (`tamper/isoklo-config-changed`). A policy file Isoklo cannot
@@ -322,60 +342,101 @@ printed to PDF:
 
 Add `--diff main...HEAD` to include a change. The receipt is written next to the report (`isoklo-receipt.json`).
 
-## Evidence receipts
-Every run produces a receipt: repository, commit SHAs, time, engine version, every rule id and version that ran, the
-verdict, and each finding as rule, level, location and fingerprint (never the evidence text, so receipts can be shared
-without sharing code). Its SHA-256 digest is taken over the canonical JSON (RFC 8785), so re-formatting does not
-change it and editing anything does.
+## False positives and waivers
+Isoklo never hides a deliberate change, and it never lets the change accept itself. **A comment inside the change
+counts for nothing**: the change being judged can write any comment, and so can the agent that wrote it. That is why
+there is no `// isoklo-ignore`. Acceptance always comes from outside the change:
 
-```console
-npx isoklo check --receipt receipt.json          # write one
-ISOKLO_RECEIPT_KEY=… npx isoklo check --sign     # sign it with HMAC-SHA256
-npx isoklo verify receipt.json                   # valid · the digest matches; the receipt is unsigned.
+**In the GitHub App: a maintainer's waiver.** On the pull request, a person with write access who is not its author
+comments a rule id (or one finding's 16-digit fingerprint, shown in the check) and a reason of at least 10 characters:
+
+```text
+/isoklo waive tamper/assertions-removed total([]) is covered by test/empty.test.js since #41
 ```
 
-`--json` output includes the receipt. The GitHub App signs receipts on paid plans and can store them for audits.
+The App checks the commenter's access with GitHub, records who, why and when, reacts 👍, and runs the check again. The
+waived finding stays visible as a note, and the waiver is written into the check, the summary comment and the evidence
+receipt. `/isoklo revoke <rule-id or fingerprint>` takes it back. Bots are never answered, and the author cannot waive
+their own pull request unless the base branch's policy sets `"waivers": { "allowAuthor": true }` (for a repository with
+one maintainer). Waivers are a Team feature; at launch every installation has them.
 
-## The GitHub App
-Install the app, and every pull request gets the same engine with no workflow file:
-
-- an **`isoklo` check run**: `success`, or `action_required` with a Re-run button and annotations on the exact lines;
-- **one summary comment** that updates in place on every push, only when there is something to say;
-- the policy from the **base branch**, and on Team, an **organisation-wide policy** from the org's `.github`
-  repository that repositories cannot override;
-- **receipts** in every check, HMAC-signed on paid plans;
-- webhook signatures verified (HMAC-SHA256), redeliveries de-duplicated, and any failure reported as a failed check:
-  never a silent pass.
-
-| Plan | For |
-|---|---|
-| **Free** | Public repositories, unlimited. |
-| **Pro** | + private repositories, signed receipts, Slack or Discord alerts when a pull request is blocked. |
-| **Team** | + organisation-wide policy, stored receipts with an export API for audits. |
-
-It runs on Cloudflare Workers (Hono, Web Crypto, no Node-only code). Source, deployment and billing set-up are in
-[`apps/github-app`](apps/github-app/README.md). Simulate it locally with no accounts: `npm --prefix apps/github-app run simulate`.
-
-## When a change is intentional
-Isoklo never hides a deliberate change; it asks for a reason reviewers can see.
-
-**Tests.** Add `// isoklo: allow-test-change <reason>` to each test file you changed on purpose. The block becomes a
-review that shows your reason. A marker without a reason does not count.
-
-**Configuration.** Pass a reason from somewhere an agent cannot write to:
+**In CI: a maintainer-only label.** Pass a reason from somewhere an agent cannot write to:
 
 ```console
+npx isoklo check --allow-test-change "label isoklo-allow-tests applied by a maintainer"
 npx isoklo check --allow-config-change "MCP server approved in #12"
 ```
 
-This accepts agent, CI, policy, type-checking, lint and coverage changes. It never accepts leaked secrets, hidden
-Unicode, injected instructions, exfiltration or invented packages: a reason does not make those safe. In GitHub, the
-workflow can pass it when a maintainer adds the `isoklo-allow-config` label (see `examples/github/isoklo.yml`).
+`--allow-test-change` accepts deleted, skipped and weakened tests; `--allow-config-change` accepts agent, CI, policy,
+type-checking, lint and coverage changes. Neither accepts leaked secrets, hidden Unicode, injected instructions,
+exfiltration or invented packages: a reason does not make those safe. `examples/github/isoklo.yml` wires both to the
+`isoklo-allow-tests` and `isoklo-allow-config` labels.
 
-**Security suppressions.** A `# nosec`, `nosemgrep` or `NOSONAR` with a written reason on the same line is a review;
-a bare one blocks.
+**For good: the policy.** A rule's level, `ignorePaths`, or the baseline (`npx isoklo init --config` records today's
+findings, so only new ones block), all in `isoklo.config.json` on the base branch, so they merge through review.
 
-**Existing problems.** `npx isoklo init --config` records today's findings as the baseline, so only new ones block.
+**Notes left in the change.** An `isoklo: allow-test-change <reason>` comment in a test file is shown to reviewers as
+the change's own explanation; it does not change the verdict. (Before 0.3 it turned the block into a review: an agent
+could approve its own deleted assertions. See the changelog.) A `# nosec`, `nosemgrep` or `NOSONAR` with a written
+reason on the same line is a review; a bare one blocks.
+
+## Evidence receipts
+Every run produces a receipt: repository, commit SHAs, time, engine version, every rule id and version that ran, the
+verdict, each finding as rule, level, location and fingerprint (never the evidence text, so receipts can be shared
+without sharing code), and any waivers with who granted them and why. Its SHA-256 digest is taken over the canonical
+JSON (RFC 8785), so re-formatting does not change it and editing anything does.
+
+**Signatures anyone can check.** The GitHub App signs receipts with **Ed25519** and publishes its public key at
+[`/.well-known/isoklo-receipt-keys.json`](https://isoklo-github-app.manishguptha188.workers.dev/.well-known/isoklo-receipt-keys.json).
+Every bot comment carries its receipt as JSON; save it and run:
+
+```console
+$ npx isoklo@latest verify receipt.json
+valid · the digest and the Ed25519 signature match, and key <key id> is the Isoklo GitHub App's published key.
+```
+
+`verify` exits `1` when the digest or the signature fails, and also when the signature is valid but made by a key you
+do not trust: anyone can make a key, so a signature alone proves nothing about who issued it. `--key` or `--jwks`
+trusts another key; `--offline` checks the digest and signature without fetching the App's keys and says so.
+
+**In CI, with your own key:**
+
+```console
+npx isoklo keygen > isoklo-signing.jwk                  # private key: keep it in a CI secret
+ISOKLO_RECEIPT_KEY="$(cat isoklo-signing.jwk)" npx isoklo check --receipt receipt.json --sign
+npx isoklo verify receipt.json --jwks keys.json         # keys.json: the public set keygen printed
+```
+
+A plain string in `ISOKLO_RECEIPT_KEY` signs with HMAC-SHA256 instead, for teams that share one secret; only key
+holders can check those. `--json` output includes the receipt.
+
+## The GitHub App
+[Install the app](https://github.com/apps/isoklo), and every pull request gets the same engine with no workflow file:
+
+- an **`isoklo` check run** in about 2 seconds: `success`, or `action_required` with a Re-run button and **one
+  annotation per file, line and rule** (lines removed side by side share one card);
+- **one summary comment** that updates in place on every push, only when there is something to say;
+- the policy from the **base branch**, and on Team, an **organisation-wide policy** from the org's `.github`
+  repository that repositories cannot override;
+- **maintainer waivers** (`/isoklo waive`), checked against GitHub's permissions and recorded;
+- an **Ed25519-signed receipt** in every check, and on Team, receipt history through an API for audits;
+- webhook signatures verified (HMAC-SHA256), redeliveries de-duplicated, and any failure reported as a failed check:
+  never a silent pass. If it cannot read the whole change, the check asks for action instead of passing.
+
+It asks for **read-only access to code**: contents (read), checks (write), pull requests (write, for its one comment),
+issues (read, so it receives `/isoklo` comments) and metadata (read). It stores no code.
+
+| Plan | Price | What it includes |
+|---|---|---|
+| **Open** | $0 | Every public repository without limit, up to 2 private repositories, all rules, signed receipts. The CLI and the Action are free for any repository. |
+| **Team** | $29 a month per GitHub organisation, unlimited seats | Every private repository, organisation-wide policy, maintainer waivers, receipt history and the receipts API, Slack or Discord alerts when a pull request is blocked. |
+| **Enterprise** | from $249 a month | Everything in Team, self-hosted in your own Cloudflare account with your own signing key, receipt exports as audit evidence, an SLA. |
+
+At launch every installation gets Team features at no charge; plan limits start only after at least 30 days' notice.
+Details and trials: [euklo.com/isoklo/#pricing](https://euklo.com/isoklo/#pricing) or hello@euklo.com.
+
+It runs on Cloudflare Workers (Hono, Web Crypto, no Node-only code). Source, deployment and billing set-up are in
+[`apps/github-app`](apps/github-app/README.md). Simulate it locally with no accounts: `npm --prefix apps/github-app run simulate`.
 
 ## isoklo doctor
 Which agent reads which instruction file, what is being ignored, and the repository's security posture:
@@ -412,16 +473,22 @@ was checked against the vendor's documentation on 2026-11-20; sources are in
 [`src/doctor/knowledge.ts`](src/doctor/knowledge.ts). `doctor` always exits `0`; `--strict` exits `1` on instruction
 findings, and `--min-grade B` exits `1` below a grade.
 
-## What leaves your machine
-Only the **names of newly added packages**, sent to `registry.npmjs.org`, `api.npmjs.org` and `pypi.org` to check
-they exist and whether they run install scripts.
-
-- No source code, diffs, file names or repository names are sent anywhere by the CLI.
-- Packages in private npm scopes from `.npmrc` are never looked up. `--offline` turns lookups off.
+## Security and privacy
+- **No model, anywhere.** Every verdict comes from fixed rules, so nothing written in a pull request can talk its way
+  past one. Isoklo makes no LLM calls.
+- **Diff only, in memory.** The rules read the changed lines and the files they need. On the four demo pull requests
+  they take about a millisecond (median 0.5 to 1.2 ms, Node 22, offline); the ~2 seconds you see on GitHub is GitHub's
+  API.
+- **Fails closed.** A policy it cannot parse, a base it cannot find, or a change it cannot read in full never passes.
+- **The CLI sends only the names of newly added packages**, to `registry.npmjs.org`, `api.npmjs.org` and `pypi.org`, to
+  check they exist and whether they run install scripts. No source code, diffs, file names or repository names.
+  Packages in private npm scopes from `.npmrc` are never looked up; `--offline` turns lookups off. `isoklo verify`
+  downloads the App's public key set with a plain GET, unless you pass `--offline`, `--key` or `--jwks`.
 - No telemetry, no account, no API key. The npm package has no runtime dependencies.
-- The GitHub App reads a pull request's changed files through GitHub's API inside the Worker and stores nothing of
-  your code. It keeps plan and installation records and, on Team, receipts for 400 days (rule, file, line and
-  fingerprint, never code). While billing is off, as at launch, every installation gets Team, so receipts are kept for all.
+- **The GitHub App stores no code.** It reads a pull request's changed files through GitHub's API inside the Worker. It
+  keeps plan and installation records, waivers (who, why, which finding), and, on Team, receipts for 400 days (rule,
+  file, line and fingerprint, never code). While billing is off, as at launch, every installation gets Team, so receipts
+  are kept for all. GitHub sends it new pull request comments; it discards every one that does not start with `/isoklo`.
 
 ## Reference
 
@@ -432,12 +499,14 @@ they exist and whether they run install scripts.
 | `--diff <base>...<head>` | check, scan, report | Both at once; turns scan and report into a check of that change. |
 | `--staged` | check | The staged changes against `HEAD`. |
 | `--scope <glob>` | check | Files this change may touch (repeatable). |
-| `--offline` | check | No registry lookups. |
-| `--allow-config-change <reason>` | check | Accept blocked configuration changes as reviewed. |
+| `--offline` | check, verify | No registry lookups; for verify, no key download. |
+| `--allow-config-change <reason>` | check | Accept blocked configuration changes as reviewed. Only from a maintainer-only source. |
+| `--allow-test-change <reason>` | check | Accept deleted, skipped or weakened tests as reviewed. Only from a maintainer-only source. |
+| `--key <file or key>`, `--jwks <url or file>` | verify | Trust this Ed25519 public key, or this key set (default: the GitHub App's). |
 | `--policy <file>` | scan, report | Policy from this file instead of `isoklo.config.json`. |
 | `--json` | all | Machine-readable output, with the receipt. |
 | `--sarif <file>`, `--html <file>`, `--receipt <file>` | scan, check, report | Also write SARIF, the HTML report, or the receipt. |
-| `--sign` | scan, check, report | HMAC-sign the receipt with `ISOKLO_RECEIPT_KEY`. |
+| `--sign` | scan, check, report | Sign the receipt with `ISOKLO_RECEIPT_KEY`: an Ed25519 key from `isoklo keygen`, or a shared HMAC secret. |
 | `--brief` | scan, check | Leave out the "why" lines. |
 | `--hook`, `--ci`, `--config`, `--require`, `--all`, `-y`, `--dry-run`, `--force` | init | What to set up, without asking. |
 | `--strict`, `--min-grade <A-F>` | doctor | Turn doctor into a gate. |
@@ -460,7 +529,7 @@ are unchanged. Colour turns off outside a terminal and whenever `NO_COLOR` is se
 The engine is a separate entry point with no Node-only dependencies, so it runs in CI, in a server, or in a Worker:
 
 ```js
-import { runCheck, runScan, createReceipt, parseConfig } from "isoklo/engine";
+import { runCheck, runScan, createReceipt, verifyReceipt, parseConfig, lineAnnotations } from "isoklo/engine";
 ```
 
 ## Limits
@@ -479,11 +548,18 @@ block, which matters when the thing being checked is an agent.
 **Does it only check pull requests written by agents?** It checks every pull request. The rules target the mistakes
 agents make most, but a person who deletes a test gets the same verdict.
 
-**Will it slow down CI?** A check takes seconds. The only network calls are the package lookups, and each gives up
-after 8 seconds.
+**Will it slow down CI?** The rules take milliseconds; a check takes seconds, almost all of it git or GitHub's API.
+The only network calls are the package lookups, and each gives up after 8 seconds.
 
-**What if it blocks something it shouldn't?** Use the escape hatch for that rule, set the rule's level in the policy,
+**What if it blocks something it shouldn't?** A maintainer waives it on the pull request (`/isoklo waive <rule-id>
+<reason>`), or you set the rule's level in the policy. See [False positives and waivers](#false-positives-and-waivers),
 and please [open an issue](https://github.com/isoklo/isoklo/issues) with the example.
+
+**Why mark it as a required check?** Without it, a failing check is advice. In **Settings → Rules → Rulesets**, require
+the `isoklo` status check (or `check`, for the Action) on your default branch, and GitHub refuses to merge until it passes.
+
+**Why flat pricing per organisation?** Isoklo checks pull requests, not people, and agents open more of them every
+month. Per-seat pricing would charge you more for adopting them.
 
 ## Live demo
 Four agent pull requests on [isoklo/isoklo-demo](https://github.com/isoklo/isoklo-demo), left open as exhibits. Every
@@ -496,14 +572,25 @@ one passes its unit tests; Isoklo blocks three of them.
 | [#3](https://github.com/isoklo/isoklo-demo/pull/3) | Quietly gave itself `Bash(*)` and `WebFetch(domain:*)` in `.claude/settings.json` | ✅ | ❌ blocked |
 | [#4](https://github.com/isoklo/isoklo-demo/pull/4) | Fixed a real bug, with regression tests | ✅ | ✅ passed |
 
-![Pull request #1: the isoklo check is failing and required, so the merge button is disabled](https://raw.githubusercontent.com/isoklo/isoklo/main/docs/pr-blocked.png)
+| The bot comment, with its receipt | An invented package: CRITICAL |
+|---|---|
+| ![The isoklo comment on pull request 1: blocked, two HIGH findings with file and line, and the evidence receipt](https://raw.githubusercontent.com/isoklo/isoklo/main/docs/assets/receipt-comment.png) | ![The isoklo comment on pull request 2: blocked, CRITICAL, invoice-pdf-renderer-lite is not on npm](https://raw.githubusercontent.com/isoklo/isoklo/main/docs/assets/hallucinated-package.png) |
+| **On the exact line** (the demo runs the Action and the App, so each annotates it) | **The same verdict in your terminal** (`npx --yes isoklo@latest check --base main`) |
+| ![The diff of pull request 1: line 35 adds test.skip, and the annotations say the test is disabled, with the fix](https://raw.githubusercontent.com/isoklo/isoklo/main/docs/assets/inline-annotation.png) | ![isoklo check output: blocked, two assertions removed at lines 25 and 26, and a test disabled at line 35](https://raw.githubusercontent.com/isoklo/isoklo/main/docs/assets/cli-verdict.png) |
+
+*Screenshots of Isoklo 0.2.0 on isoklo-demo, cropped to the part that matters; nothing inside a crop is edited.*
 
 ## Why the name
 *iso* (Greek ἴσος, "equal"). Euclid's *Elements* I.5, the isosceles theorem, was nicknamed the *pons asinorum*, the bridge
 every student had to cross to show they could follow a proof. Isoklo is that bridge for agent code. The symbol is a point
 and a line with one tail at each end; turn it half a turn and it lands on itself, equal both ways.
 
-## Licence
+## Pricing and licence
+The CLI and the GitHub Action are free for any repository. The GitHub App is free for every public repository and up to
+2 private ones; Team is $29 a month per GitHub organisation with unlimited seats; Enterprise starts at $249 a month. See
+[The GitHub App](#the-github-app) and [euklo.com/isoklo/#pricing](https://euklo.com/isoklo/#pricing). Questions and
+trials: hello@euklo.com.
+
 Isoklo is released under the [Functional Source License, Version 1.1, ALv2 Future License](LICENSE.md)
 (`FSL-1.1-ALv2`). You may use, copy, modify and redistribute it for any purpose except offering a competing product or
 service. Two years after each version is released, that version also becomes available under the Apache License 2.0.

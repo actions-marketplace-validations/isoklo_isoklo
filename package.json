@@ -1,10 +1,10 @@
 {
   "name": "isoklo",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Proof before merge. A deterministic merge gate for AI-written pull requests: weakened tests, invented packages, leaked secrets, injected agent instructions, risky MCP servers and out-of-scope edits.",
   "license": "FSL-1.1-ALv2",
   "author": "Manish Guptha",
-  "homepage": "https://github.com/isoklo/isoklo#readme",
+  "homepage": "https://euklo.com/isoklo",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/isoklo/isoklo.git"

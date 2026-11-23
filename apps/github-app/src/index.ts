@@ -2,19 +2,24 @@
  * The Isoklo GitHub App: install it on a repository or an organisation and every pull request gets a deterministic
  * merge gate, with no workflow file and no YAML.
  *
- *   POST /webhooks/github   pull_request, check_run, check_suite, marketplace_purchase, installation events
+ *   POST /webhooks/github   pull_request, issue_comment (/isoklo waive), check_run, check_suite, marketplace_purchase,
+ *                           installation events
  *   POST /webhooks/stripe   Stripe subscription events (plans)
- *   GET  /api/receipts/:owner/:repo/:sha   stored evidence receipts (Team plan, API key)
+ *   GET  /api/receipts/:owner/:repo           receipt history for a repository (Team plan, API key)
+ *   GET  /api/receipts/:owner/:repo/:sha      one stored evidence receipt (Team plan, API key)
+ *   GET  /.well-known/isoklo-receipt-keys.json   the public keys receipts are signed with (JWKS), for `isoklo verify`
  *   GET  /health
  */
 import { Hono, type Context } from "hono";
-import { sha256Hex } from "isoklo/engine";
+import { ed25519KeyId, isEd25519Jwk, mergeOrgPolicy, sha256Hex } from "isoklo/engine";
 import { handleMarketplace, handleStripeEvent } from "./billing.js";
 import { verifyGithubSignature, verifyStripeSignature } from "./crypto.js";
 import type { Env } from "./env.js";
 import { GitHub } from "./github.js";
-import { handlePullRequest, type Deps, type Outcome, type PullRequestEvent } from "./pr.js";
+import { entitlementsFor } from "./plans.js";
+import { handlePullRequest, policyAt, type Deps, type Outcome, type PullRequestEvent } from "./pr.js";
 import { ENGINE_VERSION } from "./version.js";
+import { allowAuthorFrom, handleWaiverComment, type IssueCommentEvent, type WaiverOutcome } from "./waivers.js";
 
 const PR_ACTIONS = new Set(["opened", "synchronize", "reopened", "ready_for_review"]);
 
@@ -53,9 +58,25 @@ export function createApp(overrides: Partial<Deps> = {}): App {
   const deps: Deps = { fetch: overrides.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a)), now: overrides.now ?? (() => new Date()) };
   const app: App = new Hono<{ Bindings: Env }>();
   const results: Outcome[] = [];
+  const waiverResults: WaiverOutcome[] = [];
 
   app.get("/", (c) => c.text(`isoklo github app ${ENGINE_VERSION}: proof before merge.\n`));
   app.get("/health", (c) => c.json({ ok: true, engine: ENGINE_VERSION }));
+
+  // The public half of the receipt signing key, so anyone can check a receipt: npx isoklo verify receipt.json.
+  app.get("/.well-known/isoklo-receipt-keys.json", async (c) => {
+    const keys: Record<string, string>[] = [];
+    const raw = c.env.RECEIPT_SIGNING_JWK;
+    if (raw) {
+      try {
+        const jwk: unknown = JSON.parse(raw);
+        if (isEd25519Jwk(jwk, true)) keys.push({ kty: "OKP", crv: "Ed25519", x: jwk.x, kid: await ed25519KeyId(jwk.x), use: "sig", alg: "EdDSA" });
+      } catch {
+        console.error("isoklo: RECEIPT_SIGNING_JWK is not valid JSON; no public key is published.");
+      }
+    }
+    return c.json({ keys }, 200, { "cache-control": "public, max-age=300", "access-control-allow-origin": "*" });
+  });
 
   app.post("/webhooks/github", async (c) => {
     const body = await c.req.text();
@@ -94,6 +115,39 @@ export function createApp(overrides: Partial<Deps> = {}): App {
       if (!PR_ACTIONS.has(action)) return c.json({ ok: true, ignored: `pull_request.${action}` }, 202);
       if (!isPullRequestEvent(payload)) return c.json({ error: "pull_request event without installation, repository or head" }, 400);
       const state = await background(c, run(payload));
+      return c.json({ ok: true, state }, 202);
+    }
+
+    // A maintainer's waiver: `/isoklo waive <rule-id or fingerprint> <reason>` on the pull request.
+    if (event === "issue_comment") {
+      const e = payload as Partial<IssueCommentEvent>;
+      if (typeof e.installation?.id !== "number" || typeof e.repository?.full_name !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(e.repository.full_name)
+        || typeof e.repository.owner?.id !== "number" || typeof e.issue?.number !== "number" || typeof e.comment?.id !== "number"
+        || typeof e.comment.body !== "string" || typeof e.comment.user?.login !== "string") {
+        return c.json({ ok: true, ignored: "issue_comment without the fields a waiver needs" }, 202);
+      }
+      // Most comments are not commands: answer GitHub at once and fetch nothing.
+      if (!/^\s*\/isoklo\b/im.test(e.comment.body) || e.issue.pull_request == null) return c.json({ ok: true, ignored: "not an /isoklo command" }, 202);
+      const ev = e as IssueCommentEvent;
+      const gh = new GitHub(c.env, deps.fetch as unknown as ConstructorParameters<typeof GitHub>[1], () => deps.now().getTime());
+      const work = handleWaiverComment(c.env, ev, {
+        github: gh,
+        now: deps.now,
+        entitlements: (account) => entitlementsFor(c.env, account, deps.now()),
+        allowAuthor: async (token, repo, pr, ent) => {
+          const base = await policyAt(gh, token, repo, pr.base.sha);
+          const org = ent.orgPolicy ? await policyAt(gh, token, `${ev.repository.owner.login}/.github`, undefined) : null;
+          return allowAuthorFrom(base.config, org?.source ? mergeOrgPolicy(org.config, base.config) : null);
+        },
+        recheck: async (pr) => {
+          await run({ installation: ev.installation, repository: ev.repository, pull_request: pr });
+          const last = results.at(-1);
+          return last?.status === "checked" ? last.waived : null;
+        },
+      }).then((r) => { waiverResults.push(r); }, (error: unknown) => {
+        console.error(`isoklo: waiver on ${ev.repository.full_name}#${ev.issue.number} failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+      const state = await background(c, work);
       return c.json({ ok: true, state }, 202);
     }
 
@@ -160,18 +214,49 @@ export function createApp(overrides: Partial<Deps> = {}): App {
     return c.json({ received: true, ...r });
   });
 
-  app.get("/api/receipts/:owner/:repo/:sha", async (c) => {
+  /** An API key (stored hashed, as `apikey:<sha256>` -> owner login) that may read this owner's receipts. */
+  const authorised = async (c: Ctx, owner: string): Promise<Response | null> => {
     const key = /^Bearer\s+(.+)$/.exec(c.req.header("authorization") ?? "")?.[1];
     if (!key || !c.env.ISOKLO_KV) return c.json({ error: "an API key is required" }, 401);
-    const owner = await c.env.ISOKLO_KV.get(`apikey:${await sha256Hex(key)}`);
+    const holder = await c.env.ISOKLO_KV.get(`apikey:${await sha256Hex(key)}`);
+    if (holder === null || holder.toLowerCase() !== owner.toLowerCase()) return c.json({ error: "this key cannot read that repository's receipts" }, 403);
+    return null;
+  };
+
+  app.get("/api/receipts/:owner/:repo/:sha", async (c) => {
     const { owner: o, repo, sha } = c.req.param();
-    if (owner === null || owner.toLowerCase() !== o.toLowerCase()) return c.json({ error: "this key cannot read that repository's receipts" }, 403);
-    const receipt = await c.env.ISOKLO_KV.get(`receipt:${o}/${repo}:${sha}`);
-    return receipt === null ? c.json({ error: "no receipt stored for that commit" }, 404) : c.body(receipt, 200, { "content-type": "application/json" });
+    const denied = await authorised(c, o);
+    if (denied) return denied;
+    const receipt = await c.env.ISOKLO_KV?.get(`receipt:${o}/${repo}:${sha}`);
+    return receipt == null ? c.json({ error: "no receipt stored for that commit" }, 404) : c.body(receipt, 200, { "content-type": "application/json" });
   });
 
-  /** For tests and the local simulator: what each pull request check concluded. */
-  (app as App & { outcomes: Outcome[] }).outcomes = results;
+  // Receipt history for audits: up to 100 receipts per page; follow `cursor` for more.
+  app.get("/api/receipts/:owner/:repo", async (c) => {
+    const { owner: o, repo } = c.req.param();
+    const denied = await authorised(c, o);
+    if (denied) return denied;
+    const kv = c.env.ISOKLO_KV;
+    if (kv?.list === undefined) return c.json({ error: "this installation's store cannot list receipts" }, 501);
+    const cursor = c.req.query("cursor");
+    const page = await kv.list({ prefix: `receipt:${o}/${repo}:`, limit: 100, ...(cursor ? { cursor } : {}) });
+    const receipts: unknown[] = [];
+    for (const k of page.keys) {
+      const text = await kv.get(k.name);
+      if (text === null) continue;
+      try {
+        receipts.push(JSON.parse(text));
+      } catch {
+        // a damaged entry is skipped, not served
+      }
+    }
+    return c.json({ repository: `${o}/${repo}`, receipts, cursor: page.list_complete ? null : page.cursor ?? null });
+  });
+
+  /** For tests and the local simulator: what each pull request check and each waiver command concluded. */
+  const exposed = app as App & { outcomes: Outcome[]; waivers: WaiverOutcome[] };
+  exposed.outcomes = results;
+  exposed.waivers = waiverResults;
   return app;
 }
 

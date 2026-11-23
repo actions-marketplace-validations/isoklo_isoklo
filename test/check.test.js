@@ -142,25 +142,38 @@ test("replacing real assertions with ones that cannot fail blocks", (t) => {
   assert.deepEqual(ids(r).sort(), ["assertions-removed:blocked", "tautology:blocked"]);
 });
 
-test("a reasoned allow marker turns the block into review and passes", (t) => {
+test("an allow marker written inside the change never unblocks it: an agent could write one", (t) => {
   const dir = pr(t, { "test/auth.test.js": AUTH_TEST }, (d) =>
     write(d, {
       "test/auth.test.js": "// isoklo: allow-test-change attempts counter removed by issue #42\n" +
         AUTH_TEST.replace("  expect(res.attempts).toBe(1);\n", ""),
     }));
   const r = result(dir);
-  assert.equal(r.code, 0);
+  assert.equal(r.code, 1);
   const f = findings(r).find((x) => x.id === "assertions-removed");
-  assert.equal(f.level, "review");
-  assert.equal(f.allowedBecause, "attempts counter removed by issue #42");
+  assert.equal(f.level, "blocked");
+  assert.equal(f.allowedBecause, undefined);
+  // The reviewer still sees what the change says about itself.
+  assert.match(f.fix, /The change explains: "attempts counter removed by issue #42"/);
+  assert.match(f.fix, /cannot accept it; a maintainer can/);
 });
 
-test("an allow marker without a reason does not unblock", (t) => {
+test("an empty allow marker changes nothing and teaches nothing", (t) => {
   const dir = pr(t, { "test/auth.test.js": AUTH_TEST }, (d) =>
     write(d, { "test/auth.test.js": "// isoklo: allow-test-change\n" + AUTH_TEST.replace("  expect(res.attempts).toBe(1);\n", "") }));
   const r = result(dir);
   assert.equal(r.code, 1);
-  assert.match(findings(r)[0].fix, /needs a reason/);
+  assert.doesNotMatch(findings(r)[0].fix, /allow-test-change/);
+});
+
+test("--allow-test-change, from a maintainer-only source such as a label, turns test blocks into review", (t) => {
+  const dir = pr(t, { "test/auth.test.js": AUTH_TEST }, (d) =>
+    write(d, { "test/auth.test.js": AUTH_TEST.replace("  expect(res.attempts).toBe(1);\n", "") }));
+  const raw = check(dir, "--json", "--allow-test-change", "label isoklo-allow-tests applied by a maintainer");
+  assert.equal(raw.code, 0, raw.err);
+  const f = findings(JSON.parse(raw.out)).find((x) => x.id === "assertions-removed");
+  assert.equal(f.level, "review");
+  assert.equal(f.allowedBecause, "label isoklo-allow-tests applied by a maintainer");
 });
 
 test("python: removing an assert from test_*.py blocks", (t) => {

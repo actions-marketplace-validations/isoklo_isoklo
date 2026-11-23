@@ -77,16 +77,34 @@ export function markdownSummary(s: CheckSummary, o: MarkdownOptions = {}): strin
     const passes = s.results.flatMap((r) => r.passes).slice(0, 12);
     if (passes.length > 0) lines.push(...passes.map((p) => `- ✓ ${cell(p)}`), "");
   }
-  const infos: Finding[] = findings.filter((f) => f.level === "info");
+  // Waivers are never silent: who accepted what, and why, stays on the pull request.
+  const waived = findings.filter((f) => f.waiver !== undefined);
+  if (waived.length > 0) {
+    lines.push(`**Waived by maintainers** (${waived.length})`, "");
+    for (const f of waived.slice(0, max)) {
+      lines.push(`- ${code(f.ruleId ?? f.id)} ${cell(f.message)} · waived by ${cell(f.waiver?.by ?? "")}: ${cell(f.waiver?.reason ?? "")}`);
+    }
+    lines.push("");
+  }
+  const infos: Finding[] = findings.filter((f) => f.level === "info" && f.waiver === undefined);
   if (infos.length > 0) lines.push(`<sub>${plural(infos.length, "note")} for the record: ${infos.slice(0, 5).map((f) => cell(f.message)).join(" · ")}</sub>`, "");
 
   if (o.receipt !== undefined) {
     const r = o.receipt;
+    const sig = r.integrity.signature;
+    const signed = sig === undefined ? " · unsigned" : sig.algorithm === "ed25519" ? ` · Ed25519-signed (key ${code(sig.keyId)})` : ` · HMAC-signed (${code(sig.keyId)})`;
     lines.push(
-      `**Evidence receipt** ${code(`sha256:${r.integrity.digest.slice(0, 16)}…`)}${r.integrity.signature ? ` · signed (${code(r.integrity.signature.keyId)})` : " · unsigned"} · engine ${r.engineVersion} · ${plural(r.rules.length, "rule")} · ${r.createdAt.slice(0, 19).replace("T", " ")} UTC`,
+      `**Evidence receipt** ${code(`sha256:${r.integrity.digest.slice(0, 16)}…`)}${signed} · engine ${r.engineVersion} · ${plural(r.rules.length, "rule")} · ${r.createdAt.slice(0, 19).replace("T", " ")} UTC`,
       "",
     );
-    if (o.receiptJson === true) lines.push("<details><summary>Receipt (canonical JSON)</summary>", "", "```json", JSON.stringify(r, null, 2), "```", "", "</details>", "");
+    if (o.receiptJson === true) {
+      lines.push(
+        "<details><summary>Receipt (canonical JSON) and how to verify it</summary>", "",
+        "Save this as `receipt.json`, then run `npx isoklo@latest verify receipt.json`: it recomputes the SHA-256 digest" +
+          (sig?.algorithm === "ed25519" ? " and checks the Ed25519 signature against the Isoklo GitHub App's published key." : "."),
+        "", "```json", JSON.stringify(r, null, 2), "```", "", "</details>", "",
+      );
+    }
   }
   lines.push("<sub>Isoklo checks every pull request with fixed rules, not a model: the same change always gets the same verdict.</sub>");
   let out = lines.join("\n");

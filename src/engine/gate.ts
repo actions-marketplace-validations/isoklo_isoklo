@@ -28,6 +28,7 @@ import { finalize } from "./finalize.js";
 import { matchesAny } from "./glob.js";
 import { CONFIG_CHANGE_RULES, canonicalId, rulesFor } from "./registry.js";
 import { basename, movedLines, pathOf } from "./text.js";
+import type { Waiver } from "./waivers.js";
 
 export interface ChangeSource {
   files: FileDiff[];
@@ -49,6 +50,13 @@ export interface CheckOptions {
   configSource?: string | null;
   /** A maintainer's reason to accept deliberate configuration changes. */
   allowConfigReason?: string;
+  /**
+   * A maintainer's reason to accept deliberate test changes (deleted, skipped or weakened tests). It must come from
+   * outside the change, such as a label only maintainers can apply: a reason written inside the change never counts.
+   */
+  allowTestReason?: string;
+  /** Maintainer waivers for this pull request (the GitHub App's `/isoklo waive`). */
+  waivers?: readonly Waiver[];
   /** Scope globs declared on the command line or by the App's caller. */
   scope?: string[];
   /** The pull request description, for an isoklo-scope declaration. */
@@ -111,8 +119,13 @@ export async function runCheck(src: ChangeSource, o: CheckOptions): Promise<Chec
     customNpmRegistry: npmrc.customRegistry,
     ...(o.maxLookups === undefined ? {} : { maxLookups: o.maxLookups }),
   });
+  const tests = weakenedTests(files);
+  const testReason = o.allowTestReason?.trim();
+  if (testReason) {
+    for (const f of tests.findings) if (f.level === "blocked") { f.level = "review"; f.allowedBecause = testReason; }
+  }
   const v1: RuleResult[] = [
-    weakenedTests(files),
+    tests,
     packages,
     agentConfig(configs, o.allowConfigReason === undefined ? {} : { allowReason: o.allowConfigReason }),
   ];
@@ -190,7 +203,7 @@ export async function runCheck(src: ChangeSource, o: CheckOptions): Promise<Chec
     base: o.base,
     head: o.head,
     filesChanged: files.length,
-    results: await finalize([...v1, ...v2], o.config),
+    results: await finalize([...v1, ...v2], o.config, o.waivers ?? []),
     rulesRun: rulesFor("check"),
     configSource: o.configSource ?? null,
   };

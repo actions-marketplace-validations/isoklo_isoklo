@@ -7,7 +7,8 @@
  */
 import type { Finding } from "./types.js";
 import type { CheckSummary } from "./report.js";
-import { verdictOf } from "./report.js";
+import { findingsOf, verdictOf } from "./report.js";
+import { annotationTitle, lineAnnotations, resolution } from "../output/annotations.js";
 import { cell as mdCell, code as mdCode } from "../output/markdown.js";
 
 /** Escaping for the message part of a workflow command. */
@@ -19,24 +20,24 @@ export const escapeProperty = (s: string) => escapeData(s).replace(/:/g, "%3A").
 const COMMAND = { blocked: "error", review: "warning", info: "notice" } as const;
 export const PER_TYPE_LIMIT = 10;
 
+/**
+ * One annotation per (file, line, rule), the same cards the GitHub App draws (see output/annotations.ts), most serious
+ * first. Findings with no place in a file (a package that was not verified, too many files) annotate the run.
+ */
 export function annotations(s: CheckSummary): string[] {
-  const findings = s.results.flatMap((r) => r.findings);
   const out: string[] = [];
   const used = { error: 0, warning: 0, notice: 0 };
-  for (const level of ["blocked", "review", "info"] as const) {
-    for (const f of findings.filter((x) => x.level === level)) {
-      const cmd = COMMAND[f.level];
-      const title = `Isoklo: ${f.level}`;
-      const body = `${f.message}\n${f.allowedBecause !== undefined ? `allowed: ${f.allowedBecause}` : `fix: ${f.fix}`}`;
-      // One annotation per finding, placed on its first piece of evidence (or on the file, or the run).
-      if (used[cmd] >= PER_TYPE_LIMIT) continue;
-      used[cmd]++;
-      // Removed lines no longer exist in the new file: annotate where the removal happened instead.
-      const e = f.evidence[0];
-      const at = e?.anchor ?? (e === undefined ? undefined : { path: e.path, line: e.line });
-      const where = at === undefined ? "" : ` file=${escapeProperty(at.path)},line=${Math.max(1, at.line)},`;
-      out.push(`::${cmd}${where}${where === "" ? " " : ""}title=${escapeProperty(title)}::${escapeData(body)}`);
-    }
+  const take = (cmd: keyof typeof used) => (used[cmd] < PER_TYPE_LIMIT ? (used[cmd]++, true) : false);
+  // Only the first place of each finding, as before: GitHub keeps ten of each type per step.
+  for (const a of lineAnnotations(s, { placesPerFinding: 1 })) {
+    const cmd = COMMAND[a.level];
+    if (!take(cmd)) continue;
+    out.push(`::${cmd} file=${escapeProperty(a.path)},line=${a.line},title=${escapeProperty(a.title)}::${escapeData(a.message)}`);
+  }
+  for (const f of findingsOf(s).filter((x) => x.evidence.length === 0)) {
+    const cmd = COMMAND[f.level];
+    if (!take(cmd)) continue;
+    out.push(`::${cmd} title=${escapeProperty(annotationTitle(f))}::${escapeData(`${f.message}\n${resolution(f)}`)}`);
   }
   return out;
 }

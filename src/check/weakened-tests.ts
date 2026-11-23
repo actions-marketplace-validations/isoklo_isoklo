@@ -6,8 +6,12 @@
  *   - removes more assertions than it adds back,
  *   - replaces assertions with ones that can never fail,
  *   - skips a test, or focuses one so the others stop running.
- * Fairness: moved or reformatted assertions cancel out across all test files; a reviewable
- * `isoklo: allow-test-change <reason>` comment in a file turns that file's blocks into "review".
+ * Fairness: moved or reformatted assertions cancel out across all test files.
+ *
+ * An `isoklo: allow-test-change <reason>` comment that the change adds is shown to reviewers as the change's own
+ * explanation, but it never changes the verdict: the change being judged can write any comment it likes, so an agent
+ * could otherwise approve its own deleted assertions. A maintainer accepts a test change from outside the change: a
+ * waiver in the GitHub App (`/isoklo waive`), `--allow-test-change` from a maintainer-only label in CI, or the baseline.
  */
 import type { FileDiff } from "./diff.js";
 import { ALLOW_MARKER, disables, isAssertion, isTautology, isTestPath, normalize } from "./patterns.js";
@@ -128,15 +132,12 @@ export function weakenedTests(files: FileDiff[]): RuleResult {
     });
   }
 
-  // Escape hatch: every file a finding points at carries a reasoned allow marker -> review, not blocked.
+  // The change's own explanation, for the reviewer. It does not change the level: see the note at the top.
   for (const f of findings) {
-    const paths = [...new Set(f.evidence.map((e) => e.path))];
-    const reasons = paths.map((p) => allow.get(p));
-    if (reasons.every((r) => r !== undefined && r !== "")) {
-      f.level = "review";
-      f.allowedBecause = [...new Set(reasons as string[])].join("; ");
-    } else if (reasons.some((r) => r === "")) {
-      f.fix += " The isoklo: allow-test-change marker needs a reason after it.";
+    const paths = [...new Set(f.evidence.flatMap((e) => [e.path, e.anchor?.path ?? e.path]))];
+    const reasons = [...new Set(paths.map((p) => allow.get(p)).filter((r): r is string => r !== undefined && r !== ""))];
+    if (reasons.length > 0) {
+      f.fix += ` The change explains: "${reasons.join("; ").slice(0, 200)}". A reason written inside the change cannot accept it; a maintainer can.`;
     }
   }
 

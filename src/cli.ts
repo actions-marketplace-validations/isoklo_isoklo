@@ -24,7 +24,8 @@ import { annotations, couldNotRunAnnotation, jobSummary } from "./check/github.j
 import { runCheck } from "./engine/gate.js";
 import { runScan } from "./engine/scan.js";
 import { CONFIG_FILES, ConfigError, parseConfig, type IsokloConfig } from "./engine/config.js";
-import { createReceipt, verifyReceipt, type Receipt } from "./engine/receipt.js";
+import { APP_RECEIPT_KEYS_URL, createReceipt, parseSigningKey, trustedKeysFrom, verifyReceipt, type Receipt, type TrustedKey } from "./engine/receipt.js";
+import { ed25519GenerateJwk } from "./engine/crypto.js";
 import { RULES } from "./engine/registry.js";
 import { toSarif } from "./output/sarif.js";
 import { toHtml, type AuditInput } from "./output/html.js";
@@ -34,7 +35,8 @@ import { detect, installCi, installConfig, installHook, parseRemote, requireChec
 const HELP = `isoklo: proof before merge. A deterministic merge gate for AI-written code.
 
 Usage
-  npx isoklo                 scan this repository now, with no setup
+  npx isoklo@latest                 scan this repository now, with no setup
+  npx isoklo@latest check           judge this branch's changes, as the merge gate does
   npx isoklo <command> [path] [options]
 
 Commands
@@ -53,17 +55,22 @@ Commands
                    security posture, graded A to F. Advisory; never blocks.
   report [path]    Write a standalone executive audit report (HTML, prints to PDF), with
                    the grade, summary, evidence and a remediation checklist.
-  verify <file>    Check an evidence receipt's digest (and signature, with ISOKLO_RECEIPT_KEY).
+  verify <file>    Check an evidence receipt: its SHA-256 digest, its signature, and whether
+                   an Ed25519 signing key is one you trust (by default, the GitHub App's).
   rules            List every rule with its id, severity and what it stops.
+  keygen           Make an Ed25519 key for signing receipts: the private key on stdout,
+                   the public key set to publish on stderr.
 
 Options
   -h, --help                  Show this help.
   -v, --version               Show the version.
-  --json                      Print a machine-readable report (scan, check, doctor, report, rules).
+  --json                      Print a machine-readable report (scan, check, doctor, report, rules,
+                              verify).
   --sarif <file>              Also write SARIF 2.1.0 for GitHub Code Scanning (scan, check, report).
   --html <file>               Also write the HTML audit report (scan, check; report writes one anyway).
   --receipt <file>            Also write the evidence receipt as JSON (scan, check, report).
-  --sign                      Sign the receipt with HMAC-SHA256, using ISOKLO_RECEIPT_KEY.
+  --sign                      Sign the receipt with ISOKLO_RECEIPT_KEY: an Ed25519 key from
+                              \`isoklo keygen\` (anyone can check it), or a shared HMAC secret.
   --policy <file>             scan, report: read policy from this file instead of isoklo.config.json.
   --brief                     Leave out the "why" line under each finding.
 
@@ -80,8 +87,17 @@ Options
   --offline                   Do not contact package registries; new packages are listed as not
                               verified. (Only public package names are ever sent.)
   --allow-config-change <reason>
-                              Accept blocked agent, CI and policy changes as reviewed (pass this only
-                              from a maintainer-controlled source, such as a label).
+                              Accept blocked agent, CI and policy changes as reviewed.
+  --allow-test-change <reason>
+                              Accept deleted, skipped or weakened tests as reviewed.
+                              Pass both only from a source agents cannot write, such as a label only
+                              maintainers can apply. A reason written inside the change never counts.
+
+  verify
+  --key <file or key>         Trust only this Ed25519 public key (a JWK or JWKS file, or base64url).
+  --jwks <url or file>        Trust the keys in this key set (default: the Isoklo GitHub App's,
+                              ${APP_RECEIPT_KEYS_URL}).
+  --offline                   Check the digest and signature without fetching any keys.
 
   init
   --hook                      Install the git pre-push hook.
@@ -105,7 +121,13 @@ Exit codes
   2  could not run (the gate fails closed: nothing is approved)
 
 In GitHub Actions, check also annotates the pull request's changed lines and writes a job
-summary. Or install the Isoklo GitHub App: no workflow file at all.
+summary. Or install the Isoklo GitHub App: no workflow file at all. In the App, a maintainer
+accepts a finding with a comment: /isoklo waive <rule-id or fingerprint> <reason>.
+
+Links
+  GitHub App   https://github.com/apps/isoklo
+  Website      https://euklo.com/isoklo
+  Source       https://github.com/isoklo/isoklo
 `;
 
 function fail(message: string): ExitCode {
@@ -217,8 +239,16 @@ interface Outputs {
 
 function signingKey(sign: boolean): string | null {
   const key = process.env["ISOKLO_RECEIPT_KEY"];
-  if (sign && !key) throw new ConfigError("--sign needs a key in the ISOKLO_RECEIPT_KEY environment variable.");
-  return key ? key : null;
+  if (sign && !key) {
+    throw new ConfigError("--sign needs a key in ISOKLO_RECEIPT_KEY: an Ed25519 private key from `isoklo keygen` (recommended), or a shared HMAC secret.");
+  }
+  if (!key) return null;
+  try {
+    parseSigningKey(key);
+  } catch (error) {
+    throw new ConfigError(`ISOKLO_RECEIPT_KEY: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return key;
 }
 
 async function writeOut(path: string, content: string): Promise<void> {
@@ -336,6 +366,7 @@ async function scanCommand(pathArg: string | undefined, out: Outputs, policyPath
 // ---------------------------------------------------------------- check
 interface CheckFlags {
   allowConfigReason: string | undefined;
+  allowTestReason: string | undefined;
   base: string | undefined;
   head: string;
   offline: boolean;
@@ -388,6 +419,7 @@ async function checkSummary(cwd: string, o: CheckFlags): Promise<CheckRun> {
       now: new Date(),
       config: policy.config, configSource: policy.source,
       ...(o.allowConfigReason === undefined ? {} : { allowConfigReason: o.allowConfigReason }),
+      ...(o.allowTestReason === undefined ? {} : { allowTestReason: o.allowTestReason }),
       scope: o.scope,
       prBody: pullRequestBody(),
     },
@@ -495,22 +527,95 @@ async function reportCommand(
 }
 
 // ---------------------------------------------------------------- verify and rules
-async function verifyCommand(file: string | undefined): Promise<ExitCode> {
-  if (file === undefined) return fail("verify needs a receipt file: isoklo verify isoklo-receipt.json");
+interface VerifyFlags {
+  key: string | undefined;
+  jwks: string | undefined;
+  offline: boolean;
+  json: boolean;
+}
+
+/** Trusted Ed25519 keys: --key (a JWK file, a JWKS file or a bare public key), --jwks (a URL or file), else the App's. */
+async function trustedKeys(o: VerifyFlags): Promise<{ keys: TrustedKey[] | null; note: string | null }> {
+  const fromText = (text: string, label?: string) => {
+    let doc: unknown = text.trim();
+    try {
+      doc = JSON.parse(text);
+    } catch {
+      // a bare base64url public key
+    }
+    return trustedKeysFrom(doc, label);
+  };
+  const readLocal = async (ref: string) => readFile(ref, "utf8").catch(() => null);
+  if (o.key !== undefined) {
+    const keys = fromText((await readLocal(o.key)) ?? o.key, "the key you passed");
+    if (keys.length === 0) throw new ConfigError("--key must be an Ed25519 public key: a JWK or JWKS file, or the key's base64url text.");
+    return { keys, note: null };
+  }
+  const source = o.jwks ?? process.env["ISOKLO_KEYS_URL"] ?? (o.offline ? undefined : APP_RECEIPT_KEYS_URL);
+  if (source === undefined) return { keys: null, note: "offline: the signing key was not checked against the Isoklo GitHub App's published keys." };
+  const isUrl = /^https?:\/\//.test(source);
+  if (!isUrl) {
+    const text = await readLocal(source);
+    if (text === null) throw new ConfigError(`cannot read the key set "${source}".`);
+    return { keys: fromText(text, `listed in ${basename(source)}`), note: null };
+  }
+  const official = source === APP_RECEIPT_KEYS_URL;
+  try {
+    // A plain GET: nothing about the receipt or this machine is sent.
+    const res = await fetch(source, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return { keys: trustedKeysFrom(await res.json(), official ? "the Isoklo GitHub App's published key" : `listed at ${source}`), note: null };
+  } catch (error) {
+    if (!official) throw new ConfigError(`cannot fetch the key set at ${source} (${error instanceof Error ? error.message : String(error)}).`);
+    return { keys: null, note: `could not fetch the Isoklo GitHub App's keys (${error instanceof Error ? error.message : String(error)}); the signing key was not checked against them.` };
+  }
+}
+
+async function verifyCommand(file: string | undefined, o: VerifyFlags): Promise<ExitCode> {
+  if (file === undefined) return fail("verify needs a receipt file: isoklo verify receipt.json");
   let doc: unknown;
   try {
     doc = JSON.parse(await readFile(file, "utf8"));
   } catch {
     return fail(`cannot read "${file}" as JSON.`);
   }
-  const v = await verifyReceipt(doc, process.env["ISOKLO_RECEIPT_KEY"] ?? null);
-  const ok = v.digestValid && v.signatureValid !== false;
+  const algorithm = (doc as Partial<Receipt> | null)?.integrity?.signature?.algorithm;
+  let trust: { keys: TrustedKey[] | null; note: string | null } = { keys: null, note: null };
+  try {
+    if (algorithm === "ed25519") trust = await trustedKeys(o);
+  } catch (error) {
+    if (error instanceof ConfigError) return fail(error.message);
+    throw error;
+  }
+  const v = await verifyReceipt(doc, { hmacKey: process.env["ISOKLO_RECEIPT_KEY"] ?? null, trustedKeys: trust.keys });
+  // Valid: the digest matches and no signature check failed. A key you do not trust is a failure: anyone can sign.
+  const ok = v.digestValid && v.signatureValid !== false && v.trusted !== false;
   const r = doc as Partial<Receipt>;
+  if (o.json) {
+    process.stdout.write(JSON.stringify({ tool: "isoklo", command: "verify", valid: ok, ...v, note: trust.note }, null, 2) + "\n");
+    return ok ? ExitCode.Passed : ExitCode.Blocked;
+  }
   process.stdout.write(`${ok ? "valid" : "invalid"} · ${v.detail}\n`);
+  if (trust.note) process.stdout.write(`note: ${trust.note}\n`);
   if (ok && r.verdict !== undefined) {
     process.stdout.write(`${r.repository ?? "repository"} · ${r.mode} · verdict ${r.verdict} · ${r.findings?.length ?? 0} findings · isoklo ${r.engineVersion} · ${r.createdAt}\n`);
+    const waived = r.waivers ?? [];
+    for (const w of waived) process.stdout.write(`waived: ${w.target} by ${w.by} (${w.reason})\n`);
   }
   return ok ? ExitCode.Passed : ExitCode.Blocked;
+}
+
+/** A new Ed25519 signing key: the private JWK on stdout (redirect it to a file), the public key set on stderr. */
+async function keygenCommand(): Promise<ExitCode> {
+  const jwk = await ed25519GenerateJwk();
+  process.stdout.write(`${JSON.stringify(jwk)}\n`);
+  const jwks = { keys: [{ kty: "OKP", crv: "Ed25519", x: jwk.x, kid: jwk.kid, use: "sig", alg: "EdDSA" }] };
+  process.stderr.write(
+    `isoklo: new Ed25519 signing key ${jwk.kid}. The private key went to stdout: keep it secret ` +
+      `(ISOKLO_RECEIPT_KEY in CI, or RECEIPT_SIGNING_JWK on a self-hosted GitHub App).\n` +
+      `Publish this public key set so others can check your receipts (isoklo verify --jwks <url or file>):\n${JSON.stringify(jwks)}\n`,
+  );
+  return ExitCode.Passed;
 }
 
 function rulesCommand(json: boolean): ExitCode {
@@ -617,7 +722,7 @@ async function initCommand(pathArg: string | undefined, o: InitFlags): Promise<E
 }
 
 // ---------------------------------------------------------------- arguments
-const COMMANDS = new Set(["scan", "check", "init", "doctor", "report", "verify", "rules"]);
+const COMMANDS = new Set(["scan", "check", "init", "doctor", "report", "verify", "rules", "keygen"]);
 
 /** --diff main...HEAD, main..HEAD, or just main. */
 export function parseRange(range: string): { base: string; head: string } {
@@ -643,6 +748,9 @@ export async function main(argv: string[]): Promise<ExitCode> {
         scope: { type: "string", multiple: true },
         offline: { type: "boolean" },
         "allow-config-change": { type: "string" },
+        "allow-test-change": { type: "string" },
+        key: { type: "string" },
+        jwks: { type: "string" },
         sarif: { type: "string" },
         html: { type: "string" },
         receipt: { type: "string" },
@@ -690,8 +798,9 @@ export async function main(argv: string[]): Promise<ExitCode> {
       command = "scan";
     } else return fail(`unknown command "${command}".`);
   }
-  if (command === "rules" ? rest.length > 0 : rest.length > 1) {
-    return fail(`${command} takes ${command === "rules" ? "no arguments" : `at most one ${command === "verify" ? "file" : "path"}`}.`);
+  const noArgs = command === "rules" || command === "keygen";
+  if (noArgs ? rest.length > 0 : rest.length > 1) {
+    return fail(`${command} takes ${noArgs ? "no arguments" : `at most one ${command === "verify" ? "file" : "path"}`}.`);
   }
 
   const out: Outputs = {
@@ -706,6 +815,7 @@ export async function main(argv: string[]): Promise<ExitCode> {
     staged: values.staged === true,
     scope: values.scope ?? [],
     allowConfigReason: values["allow-config-change"],
+    allowTestReason: values["allow-test-change"],
   });
 
   switch (command) {
@@ -730,9 +840,11 @@ export async function main(argv: string[]): Promise<ExitCode> {
         diff: range !== null || values.base !== undefined ? checkFlags() : null,
       });
     case "verify":
-      return verifyCommand(rest[0]);
+      return verifyCommand(rest[0], { key: values.key, jwks: values.jwks, offline: values.offline === true, json: out.json });
     case "rules":
       return rulesCommand(out.json);
+    case "keygen":
+      return keygenCommand();
     default:
       return fail(`unknown command "${command}".`);
   }

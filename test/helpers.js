@@ -46,6 +46,8 @@ export async function gate(before, after, opts = {}) {
       base: "main", head: "HEAD", fetch: opts.fetch ?? (async () => { throw new Error("no network in tests"); }),
       offline: opts.fetch === undefined, now: opts.now ?? new Date("2026-11-22T10:00:00Z"), config,
       ...(opts.allowConfigReason ? { allowConfigReason: opts.allowConfigReason } : {}),
+      ...(opts.allowTestReason ? { allowTestReason: opts.allowTestReason } : {}),
+      ...(opts.waivers ? { waivers: opts.waivers } : {}),
       scope: opts.scope ?? [], prBody: opts.prBody ?? null,
     },
   );

@@ -1,7 +1,7 @@
 /**
  * The last step of every run, in both modes and in the GitHub App: give each finding its canonical rule id and
  * severity, mask any secret that reached a message or evidence line, apply the policy's per-rule settings and baseline,
- * and order findings so the most serious come first.
+ * then any maintainer waivers, and order findings so the most serious come first.
  */
 import type { Finding, RuleResult } from "../check/types.js";
 import { maskSecrets } from "../rules/sec/secrets.js";
@@ -9,6 +9,7 @@ import type { IsokloConfig } from "./config.js";
 import { sha256Hex } from "./crypto.js";
 import { canonicalId, ruleMeta, severityOf, severityRank } from "./registry.js";
 import { visible } from "./visible.js";
+import type { Waiver } from "./waivers.js";
 
 const LEVEL_RANK = { blocked: 0, review: 1, info: 2 } as const;
 
@@ -21,7 +22,7 @@ export async function fingerprintOf(f: Finding): Promise<string> {
 
 export class UnregisteredRuleError extends Error {}
 
-export async function finalize(results: RuleResult[], config: IsokloConfig): Promise<RuleResult[]> {
+export async function finalize(results: RuleResult[], config: IsokloConfig, waivers: readonly Waiver[] = []): Promise<RuleResult[]> {
   const baseline = new Set(config.baseline);
   const out: RuleResult[] = [];
   for (const r of results) {
@@ -51,6 +52,15 @@ export async function finalize(results: RuleResult[], config: IsokloConfig): Pro
       if (baseline.has(f.fingerprint) && f.level !== "info") {
         f.level = "info";
         f.allowedBecause ??= "accepted in the baseline (isoklo.config.json)";
+      }
+      // A maintainer's waiver (one finding by fingerprint, or a rule on this pull request): recorded, never silent.
+      const w = [...waivers].reverse().find((x) => x.target === f.fingerprint || x.target === id);
+      if (w !== undefined && f.level !== "info") {
+        const reason = safe(w.reason);
+        const by = safe(w.by);
+        f.waiver = w.at === undefined ? { by, reason } : { by, reason, at: w.at };
+        f.allowedBecause = `waived by ${by}: ${reason}`;
+        f.level = "info";
       }
       kept.push(f);
     }

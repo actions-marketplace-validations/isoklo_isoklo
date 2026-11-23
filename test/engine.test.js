@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   RULES, canonicalJson, createReceipt, verifyReceipt, parseConfig, mergeOrgPolicy, ConfigError, matchesGlob,
   fileDiffsFromPullFiles, wholeFileDiff, toSarif, markdownSummary, runScan, parseDiff,
+  ed25519GenerateJwk, trustedKeysFrom, parseWaiverCommand, updateWaivers, lineAnnotations,
 } from "../dist/engine/index.js";
 import { toHtml } from "../dist/output/html.js";
 import { grade } from "../dist/doctor/grade.js";
@@ -32,7 +33,11 @@ test("receipt: canonical JSON digest verifies; any edit breaks it; HMAC needs th
   assert.equal(r.findings[0].ruleId, "sec/secret-leaked");
   assert.match(r.integrity.digest, /^[0-9a-f]{64}$/);
   assert.ok(!JSON.stringify(r).includes("ghp_"), "receipts carry fingerprints, never evidence text");
-  assert.deepEqual(await verifyReceipt(r, "team-secret"), { digestValid: true, signatureValid: true, detail: "the digest and the signature match." });
+  const ok = await verifyReceipt(r, "team-secret");
+  assert.equal(ok.digestValid, true);
+  assert.equal(ok.signatureValid, true);
+  assert.equal(ok.algorithm, "hmac-sha256");
+  assert.equal(ok.detail, "the digest and the HMAC signature match.");
   assert.equal((await verifyReceipt(r, "wrong-key")).signatureValid, false);
   assert.equal((await verifyReceipt(r)).signatureValid, null);
   const tampered = { ...r, verdict: "passed" };
@@ -41,6 +46,93 @@ test("receipt: canonical JSON digest verifies; any edit breaks it; HMAC needs th
   const reverseKeys = (v) => (Array.isArray(v) ? v.map(reverseKeys) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).reverse().map(([k, x]) => [k, reverseKeys(x)])) : v);
   const reordered = JSON.parse(JSON.stringify(reverseKeys(r), null, 4));
   assert.equal((await verifyReceipt(reordered)).digestValid, true);
+});
+
+test("receipt (Ed25519): anyone can check it; trust comes from the key, never from the receipt", async () => {
+  const s = await scanOf({ "src/k.ts": `export const k = "${fake.githubToken()}";\n` });
+  const key = await ed25519GenerateJwk();
+  const r = await createReceipt({ summary: s, engineVersion: "9.9.9", signingKey: JSON.stringify(key), createdAt: new Date("2026-11-22T10:00:00Z") });
+  assert.equal(r.integrity.signature.algorithm, "ed25519");
+  assert.equal(r.integrity.signature.publicKey, key.x);
+  assert.equal(r.integrity.signature.keyId, key.kid);
+  assert.ok(!JSON.stringify(r).includes(key.d));
+  const jwks = { keys: [{ kty: "OKP", crv: "Ed25519", x: key.x, kid: key.kid }] };
+
+  const trusted = await verifyReceipt(r, { trustedKeys: trustedKeysFrom(jwks, "the App's key") });
+  assert.deepEqual([trusted.digestValid, trusted.signatureValid, trusted.trusted, trusted.signer], [true, true, true, "the App's key"]);
+  // No trust list: the signature checks, and the result says nothing about who signed.
+  assert.equal((await verifyReceipt(r)).trusted, null);
+  // Someone else's key: a valid signature, but not from anyone you trust.
+  const stranger = await ed25519GenerateJwk();
+  const untrusted = await verifyReceipt(r, { trustedKeys: trustedKeysFrom(stranger.x) });
+  assert.deepEqual([untrusted.signatureValid, untrusted.trusted], [true, false]);
+
+  // A forger signs with their own key and presents it under the trusted key's name: the signature fails.
+  const forged = await createReceipt({ summary: s, engineVersion: "9.9.9", signingKey: JSON.stringify(stranger), createdAt: new Date("2026-11-22T10:00:00Z") });
+  const impostor = { ...r, integrity: { ...r.integrity, signature: { ...forged.integrity.signature, publicKey: key.x, keyId: key.kid } } };
+  const v = await verifyReceipt(impostor, { trustedKeys: trustedKeysFrom(jwks) });
+  assert.equal(v.digestValid, true);
+  assert.equal(v.signatureValid, false);
+  // Any edit to the body breaks the digest, whatever the signature.
+  assert.equal((await verifyReceipt({ ...r, verdict: "passed" }, { trustedKeys: trustedKeysFrom(jwks) })).digestValid, false);
+});
+
+test("waiver commands: rule id or fingerprint, a real reason, and revoke", () => {
+  assert.deepEqual(parseWaiverCommand("/isoklo waive tamper/assertions-removed totals moved to test/totals.test.js in #41"),
+    { action: "waive", target: "tamper/assertions-removed", reason: "totals moved to test/totals.test.js in #41" });
+  assert.deepEqual(parseWaiverCommand("Thanks!\n/isoklo waive 3f9c2a61b0d4e7a8 — fixture key from Stripe's documentation"),
+    { action: "waive", target: "3f9c2a61b0d4e7a8", reason: "fixture key from Stripe's documentation" });
+  assert.deepEqual(parseWaiverCommand("/isoklo revoke tamper/assertions-removed"), { action: "revoke", target: "tamper/assertions-removed" });
+  assert.equal(parseWaiverCommand("/isoklo waive tamper/assertions-removed ok").action, "error", "a reason must say something");
+  assert.equal(parseWaiverCommand("/isoklo waive everything because I said so").action, "error", "no wildcard waivers");
+  assert.equal(parseWaiverCommand("/isoklo approve tamper/assertions-removed fine by me, really").action, "error");
+  assert.equal(parseWaiverCommand("LGTM, ship it"), null);
+  const one = updateWaivers([], { action: "waive", target: "sec/secret-leaked", reason: "documented test key" }, "@ana", "2026-11-22T10:00:00Z");
+  assert.equal(one.length, 1);
+  assert.deepEqual(updateWaivers(one, { action: "revoke", target: "sec/secret-leaked" }, "@ana", "x"), []);
+});
+
+test("waivers: a maintainer's waiver passes the gate, and the record shows who, why and which finding", async () => {
+  const before = { "test/a.test.js": 'test("a", () => {\n  expect(f(1)).toBe(2);\n  expect(f(2)).toBe(4);\n});\n' };
+  const after = { "test/a.test.js": 'test("a", () => {\n  expect(f(1)).toBe(2);\n});\n' };
+  assert.equal((await gate(before, after)).results.some((r) => r.findings.some((f) => f.level === "blocked")), true);
+  const waivers = [{ target: "tamper/assertions-removed", reason: "f(2) is covered by the new property test", by: "@ana", at: "2026-11-22T10:00:00Z" }];
+  const s = await gate(before, after, { waivers });
+  const f = s.results.flatMap((r) => r.findings).find((x) => x.ruleId === "tamper/assertions-removed");
+  assert.equal(f.level, "info");
+  assert.deepEqual(f.waiver, { by: "@ana", reason: "f(2) is covered by the new property test", at: "2026-11-22T10:00:00Z" });
+  const receipt = await createReceipt({ summary: s, engineVersion: "9.9.9", waivers });
+  assert.equal(receipt.verdict, "passed");
+  assert.equal(receipt.findings.find((x) => x.ruleId === "tamper/assertions-removed").waivedBy, "@ana");
+  assert.deepEqual(receipt.waivers, [{ target: "tamper/assertions-removed", by: "@ana", reason: "f(2) is covered by the new property test", at: "2026-11-22T10:00:00Z" }]);
+  assert.equal((await verifyReceipt(receipt)).digestValid, true);
+  // The login is shown but never pings anyone (a zero-width space follows the @).
+  const zwsp = String.fromCharCode(0x200b);
+  assert.match(markdownSummary(s, { receipt }), new RegExp(`\\*\\*Waived by maintainers\\*\\* \\(1\\)[^]*waived by @${zwsp}ana: f\\(2\\) is covered`));
+  // A waiver for one fingerprint leaves every other finding alone.
+  const other = await gate(before, after, { waivers: [{ target: "0123456789abcdef", reason: "some other finding entirely", by: "@ana" }] });
+  assert.ok(other.results.some((r) => r.findings.some((x) => x.level === "blocked")));
+});
+
+test("annotations group by file, line and rule: two removed assertions at one spot draw one card", async () => {
+  const before = { "test/a.test.js": 'test("a", () => {\n  const x = f();\n  expect(x.tax).toBe(1);\n  expect(x.total).toBe(2);\n});\n' };
+  const after = { "test/a.test.js": 'test("a", () => {\n  const x = f();\n});\n' };
+  const notes = lineAnnotations(await gate(before, after));
+  const removed = notes.filter((a) => a.ruleId === "tamper/assertions-removed");
+  assert.equal(removed.length, 1);
+  assert.equal(removed[0].title, "Blocked · HIGH · tamper/assertions-removed");
+  assert.match(removed[0].message, /Removed here: lines 3 and 4 of the previous version\./);
+});
+
+test("policy: waivers.allowAuthor is off unless set, and an organisation's setting wins", () => {
+  assert.equal(parseConfig(null).config.waivers.allowAuthor, null);
+  const repo = parseConfig(JSON.stringify({ waivers: { allowAuthor: true } })).config;
+  assert.equal(repo.waivers.allowAuthor, true);
+  const { warnings } = parseConfig(JSON.stringify({ waivers: { allowAuthor: "yes", anyone: true } }));
+  assert.equal(warnings.length, 2);
+  const org = parseConfig(JSON.stringify({ waivers: { allowAuthor: false } })).config;
+  assert.equal(mergeOrgPolicy(org, repo).waivers.allowAuthor, false);
+  assert.equal(mergeOrgPolicy(parseConfig(null).config, repo).waivers.allowAuthor, true);
 });
 
 test("canonical JSON sorts keys at every depth and drops undefined", () => {

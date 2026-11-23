@@ -33,6 +33,14 @@
     "online": { "type": "boolean", "default": true, "description": "Look new packages up on npm and PyPI." },
     "baseline": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-f]{16}$" }, "description": "Fingerprints of accepted findings (written by `npx isoklo init --config`). They report as info." },
     "trustedRegistries": { "type": "array", "items": { "type": "string" }, "description": "Extra hosts lockfiles may install from." },
-    "trustedMcpPackages": { "type": "array", "items": { "type": "string" }, "description": "Extra MCP server packages or image prefixes to treat as from a verified publisher." }
+    "trustedMcpPackages": { "type": "array", "items": { "type": "string" }, "description": "Extra MCP server packages or image prefixes to treat as from a verified publisher." },
+    "waivers": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "GitHub App waivers (`/isoklo waive <rule-id or fingerprint> <reason>` by a person with write access).",
+      "properties": {
+        "allowAuthor": { "type": "boolean", "default": false, "description": "Let a pull request's own author waive its findings. Off by default, because agents often open pull requests with their owner's account; turn it on for a repository with a single maintainer." }
+      }
+    }
   }
 }

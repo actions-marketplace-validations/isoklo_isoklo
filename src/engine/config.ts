@@ -37,6 +37,12 @@ export interface IsokloConfig {
   trustedRegistries: string[];
   /** Extra MCP server packages or images to treat as from a verified publisher. */
   trustedMcpPackages: string[];
+  /**
+   * GitHub App waivers. allowAuthor: may the pull request's own author waive its findings? Off by default, because an
+   * agent often opens pull requests with its owner's account; turn it on for repositories with a single maintainer.
+   * null means "not set here" (so an organisation policy can decide).
+   */
+  waivers: { allowAuthor: boolean | null };
 }
 
 export const CONFIG_FILES = ["isoklo.config.json", ".isoklo.json", ".github/isoklo.config.json"] as const;
@@ -51,11 +57,12 @@ export const defaultConfig = (): IsokloConfig => ({
   baseline: [],
   trustedRegistries: [],
   trustedMcpPackages: [],
+  waivers: { allowAuthor: null },
 });
 
 export class ConfigError extends Error {}
 
-const KNOWN_KEYS = new Set(["$schema", "scope", "rules", "ignorePaths", "online", "baseline", "trustedRegistries", "trustedMcpPackages"]);
+const KNOWN_KEYS = new Set(["$schema", "scope", "rules", "ignorePaths", "online", "baseline", "trustedRegistries", "trustedMcpPackages", "waivers"]);
 const SETTINGS = new Set<RuleSetting>(["blocked", "review", "info", "off"]);
 
 const strings = (v: unknown, where: string, problems: string[]): string[] => {
@@ -125,6 +132,16 @@ export function parseConfig(text: string | null, source = "isoklo.config.json"):
     if (typeof doc["online"] === "boolean") config.online = doc["online"];
     else warnings.push(`${source}: online must be true or false; it was ignored.`);
   }
+  const waivers = doc["waivers"];
+  if (waivers !== undefined) {
+    if (!isObject(waivers)) warnings.push(`${source}: waivers must be an object; it was ignored.`);
+    else {
+      for (const key of Object.keys(waivers)) if (key !== "allowAuthor") warnings.push(`${source}: unknown setting "waivers.${key}" was ignored.`);
+      const allow = waivers["allowAuthor"];
+      if (typeof allow === "boolean") config.waivers.allowAuthor = allow;
+      else if (allow !== undefined) warnings.push(`${source}: waivers.allowAuthor must be true or false; it was ignored.`);
+    }
+  }
   return { config, warnings };
 }
 
@@ -148,5 +165,6 @@ export function mergeOrgPolicy(org: IsokloConfig, repo: IsokloConfig): IsokloCon
     baseline: repo.baseline,
     trustedRegistries: [...new Set([...org.trustedRegistries, ...repo.trustedRegistries])],
     trustedMcpPackages: [...new Set([...org.trustedMcpPackages, ...repo.trustedMcpPackages])],
+    waivers: { allowAuthor: org.waivers.allowAuthor ?? repo.waivers.allowAuthor },
   };
 }

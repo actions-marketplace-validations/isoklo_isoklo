@@ -115,13 +115,58 @@ test("check --sarif and --receipt write files; verify accepts the receipt and re
   assert.match(bad.out, /^invalid · the digest does not match/);
 });
 
-test("signed receipts: --sign needs ISOKLO_RECEIPT_KEY; verify checks the signature with the key", (t) => {
+test("signed receipts (HMAC): --sign needs ISOKLO_RECEIPT_KEY; verify checks the signature with the key", (t) => {
   const r = repo(t, { "src/a.ts": "export const a = 1;\n" });
   const receipt = join(r.dir, "receipt.json");
   assert.equal(run([r.dir, "--sign"]).code, 2);
   run([r.dir, "--sign", "--receipt", receipt], { env: { ISOKLO_RECEIPT_KEY: "team-key" } });
-  assert.match(run(["verify", receipt], { env: { ISOKLO_RECEIPT_KEY: "team-key" } }).out, /the digest and the signature match/);
+  assert.match(run(["verify", receipt], { env: { ISOKLO_RECEIPT_KEY: "team-key" } }).out, /the digest and the HMAC signature match/);
   assert.equal(run(["verify", receipt], { env: { ISOKLO_RECEIPT_KEY: "other-key" } }).code, 1);
+});
+
+test("signed receipts (Ed25519), end to end: keygen, sign, verify against a trusted key, refuse an untrusted one", (t) => {
+  const r = repo(t, { "src/a.ts": "export const a = 1;\n" });
+  // keygen: the private JWK on stdout, the public key set on stderr.
+  const gen = run(["keygen"]);
+  assert.equal(gen.code, 0, gen.err);
+  const jwk = JSON.parse(gen.out);
+  assert.equal(jwk.kty, "OKP");
+  assert.equal(jwk.crv, "Ed25519");
+  assert.match(jwk.d, /^[A-Za-z0-9_-]{43}$/);
+  const jwks = JSON.parse(gen.err.trim().split("\n").at(-1));
+  assert.equal(jwks.keys[0].x, jwk.x);
+  assert.equal(jwks.keys[0].d, undefined, "the published key set never holds the private key");
+  const jwksFile = join(r.dir, "keys.json");
+  writeFileSync(jwksFile, JSON.stringify(jwks));
+
+  const receipt = join(r.dir, "receipt.json");
+  run([r.dir, "--sign", "--receipt", receipt], { env: { ISOKLO_RECEIPT_KEY: gen.out.trim() } });
+  const doc = JSON.parse(readFileSync(receipt, "utf8"));
+  assert.equal(doc.integrity.signature.algorithm, "ed25519");
+  assert.equal(doc.integrity.signature.publicKey, jwk.x);
+  assert.ok(!JSON.stringify(doc).includes(jwk.d), "the receipt never holds the private key");
+
+  // Trusted: the key set you published.
+  const good = run(["verify", receipt, "--jwks", jwksFile]);
+  assert.equal(good.code, 0, good.out + good.err);
+  assert.match(good.out, /^valid · the digest and the Ed25519 signature match, and key [0-9a-f]{16} is listed in keys\.json\./);
+  // Untrusted: a stranger's key. A valid signature alone proves nothing about who issued it.
+  const other = JSON.parse(run(["keygen"]).out);
+  const bad = run(["verify", receipt, "--key", other.x]);
+  assert.equal(bad.code, 1);
+  assert.match(bad.out, /^invalid · .*is not one you trust/);
+  // Offline, nothing to trust against: the signature still checks, and the output says what was not checked.
+  const offline = run(["verify", receipt, "--offline"]);
+  assert.equal(offline.code, 0);
+  assert.match(offline.out, /not checked against a trusted key/);
+  // A signature lifted onto an edited receipt fails.
+  doc.verdict = doc.verdict === "passed" ? "blocked" : "passed";
+  writeFileSync(receipt, JSON.stringify(doc));
+  assert.equal(run(["verify", receipt, "--jwks", jwksFile]).code, 1);
+  // A malformed key is a clear configuration error, never a crash.
+  const broken = run([r.dir, "--sign"], { env: { ISOKLO_RECEIPT_KEY: '{"kty":"OKP"}' } });
+  assert.equal(broken.code, 2);
+  assert.match(broken.err, /ISOKLO_RECEIPT_KEY: the signing key is JSON but not an Ed25519 private key/);
 });
 
 test("check --scope blocks out-of-scope files; in GitHub Actions the pull request body declares scope", (t) => {

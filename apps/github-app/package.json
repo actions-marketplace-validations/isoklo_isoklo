@@ -1,6 +1,6 @@
 {
   "name": "isoklo-github-app",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "The Isoklo GitHub App: a deterministic merge gate on every pull request, with no workflow files. Cloudflare Workers and Hono.",
   "license": "FSL-1.1-ALv2",

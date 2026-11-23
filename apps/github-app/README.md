@@ -5,11 +5,13 @@ file and no YAML**. It runs the exact engine the CLI runs (`isoklo/engine`), on 
 
 What a pull request gets:
 
-- an **`isoklo` check run**: `success`, or `action_required` with annotations on the exact lines and a
+- an **`isoklo` check run**: `success`, or `action_required` with **one annotation per file, line and rule** and a
   **Re-run Isoklo** button (re-runs from GitHub's own "Re-run" also work);
 - **one summary comment**, updated in place on every push, posted only when there is something to say
   (`COMMENT_ON_PASS = "true"` to always post);
-- an **evidence receipt** (SHA-256; HMAC-signed on paid plans) in the check and the comment.
+- an **evidence receipt** in the check and the comment: SHA-256 over canonical JSON, signed with Ed25519 when
+  `RECEIPT_SIGNING_JWK` is set (anyone can check it with `npx isoklo verify`), or HMAC with `RECEIPT_SIGNING_KEY`;
+- **maintainer waivers**: `/isoklo waive <rule-id or fingerprint> <reason>` in a pull request comment.
 
 Safety properties:
 
@@ -18,7 +20,11 @@ Safety properties:
 - the policy is read from the pull request's **merge base**, never from the pull request (and on Team, the org policy
   from `<org>/.github/isoklo.config.json` wins over the repository's);
 - any failure completes the check as `failure` ("could not run"): the gate fails closed;
-- the app asks only for `checks: write`, `contents: read`, `pull_requests: write`, `metadata: read`.
+- a waiver counts only from a person (never a bot) with write or admin access, checked with GitHub's API, who is not
+  the pull request's author (unless the base branch's policy sets `waivers.allowAuthor`); comments that are not
+  `/isoklo` commands are dropped before any API call;
+- the app asks only for `checks: write`, `contents: read`, `pull_requests: write`, `issues: read` (to receive
+  `/isoklo` comments) and `metadata: read`.
 
 ## Try it locally (no accounts)
 
@@ -55,13 +61,25 @@ Prerequisites: a Cloudflare account, `npx wrangler login`, and the root package 
    ```console
    npx wrangler secret put GITHUB_APP_PRIVATE_KEY < .secrets/github-app.pem
    npx wrangler secret put GITHUB_WEBHOOK_SECRET < .secrets/webhook-secret.txt
-   npx wrangler secret put RECEIPT_SIGNING_KEY        # any long random string; signs paid-plan receipts
+   npx wrangler secret put RECEIPT_SIGNING_KEY        # optional: any long random string, for HMAC-signed receipts
    ```
    PowerShell: `Get-Content -Raw .secrets/github-app.pem | npx wrangler secret put GITHUB_APP_PRIVATE_KEY`.
    Then set `GITHUB_APP_ID` in `wrangler.toml` and `npm run deploy` again.
-5. **Install** the app from its page (`https://github.com/apps/<slug>/installations/new`) on a repository or a whole
+5. **Sign receipts with Ed25519** (recommended: anyone can verify them). Make a key and store only the private half,
+   straight from one command into the other; the public half is then served at `/.well-known/isoklo-receipt-keys.json`:
+   ```console
+   npx isoklo@latest keygen 2>/dev/null | npx wrangler secret put RECEIPT_SIGNING_JWK
+   ```
+   PowerShell: `npx isoklo@latest keygen 2>$null | npx wrangler secret put RECEIPT_SIGNING_JWK`. When it is set it is
+   used instead of `RECEIPT_SIGNING_KEY`. The CLI's `isoklo verify` trusts the key published by the official App's
+   Worker; a self-hosted App publishes its own, which users pass with `--jwks https://<worker>/.well-known/isoklo-receipt-keys.json`.
+6. **Install** the app from its page (`https://github.com/apps/<slug>/installations/new`) on a repository or a whole
    organisation. Open a pull request: the `isoklo` check appears within seconds.
-6. **Make it required** (optional): Settings → Rules → Rulesets → require the status check **isoklo**.
+7. **Make it required** (optional): Settings → Rules → Rulesets → require the status check **isoklo**.
+
+Upgrading an existing App to 0.3: in the App's settings, add **Repository permissions → Issues: Read-only** and
+subscribe to **Issue comment** events, then deploy. Each installation's owner is asked to accept the new permission;
+until they do, everything else keeps working and `/isoklo waive` comments simply do not arrive.
 
 ## Turn on billing
 
@@ -70,28 +88,33 @@ right setting for launch and beta. With `"on"`, plans are enforced:
 
 | Plan | Unlocks |
 |---|---|
-| free | public repositories |
-| pro | + private repositories, signed receipts, Slack or Discord alerts |
-| team | + organisation-wide policy, stored receipts and the receipt export API |
+| free | every public repository, up to 2 private repositories per account, all rules, signed receipts |
+| team | + every private repository, organisation-wide policy, maintainer waivers, stored receipts and the receipts API, Slack or Discord alerts |
+| enterprise | the same as team, for licences sold by hand (self-hosting, your own signing key, SLA) |
 
-A plan comes from, in order: the KV record written by a payment webhook, the `LICENSES` setting (licences you sell by
-hand, `{"acme": "team"}`), then free. A private repository without a paid plan gets a neutral check with an upgrade
-link (`UPGRADE_URL`, with `client_reference_id=<GitHub account id>` appended), and none of its code is read.
+Public repositories are never metered. A plan comes from, in order: the KV record written by a payment webhook, the
+`LICENSES` setting (licences you sell by hand, `{"acme": "team"}`; a trial is a KV plan record with an `until` date),
+then free. The free plan's private repositories are counted per account (`private-repos:<account id>` in KV), first come
+first served; a third gets a neutral check with an upgrade link (`UPGRADE_URL`, default
+https://euklo.com/isoklo/#pricing, with `client_reference_id=<GitHub account id>` appended), and none of its code is
+read. The old plan name `pro` is read as team.
 
 ### GitHub Marketplace
 
-1. On the app's page: **Marketplace listing** → create the listing, with plans named **Free**, **Pro** and **Team**
-   (or map other names with `MARKETPLACE_PLAN_MAP = '{"Business": "team"}'`, by name or plan id).
+1. On the app's page: **Marketplace listing** → create the listing, with plans named **Free**, **Team** and
+   **Enterprise** (or map other names with `MARKETPLACE_PLAN_MAP = '{"Business": "team"}'`, by name or plan id). A paid
+   plan with a name the app does not know is read as team, never as free.
 2. GitHub sends `marketplace_purchase` events (purchased, changed, cancelled) to the app's normal webhook; the app
    records the plan. Nothing else to configure. Submit the listing for review when ready to charge.
 3. Set `UPGRADE_URL = "https://github.com/marketplace/<slug>"` and `BILLING_MODE = "on"`, then deploy.
 
 ### Stripe
 
-1. Create products and prices for Pro and Team; set `STRIPE_PRICE_PLANS = '{"price_…": "pro", "price_…": "team"}'`.
-2. Create a Payment Link (or Checkout Session) per plan; add `metadata.plan = pro|team`. Set
+1. Create products and prices for Team (and Enterprise); set `STRIPE_PRICE_PLANS = '{"price_…": "team", "price_…": "enterprise"}'`.
+2. Create a Payment Link (or Checkout Session) per plan; add `metadata.plan = team|enterprise`. Set
    `UPGRADE_URL` to the Payment Link: the app appends `client_reference_id=<GitHub account id>` so the payment is
-   linked to the right GitHub account.
+   linked to the right GitHub account. On the website, set `NEXT_PUBLIC_ISOKLO_TEAM_CHECKOUT` to the same link so the
+   pricing section's Team button goes straight to checkout.
 3. Add a webhook endpoint `https://<worker>/webhooks/stripe` for `checkout.session.completed`,
    `customer.subscription.created`, `customer.subscription.updated` and `customer.subscription.deleted`, then:
    ```console
@@ -102,13 +125,16 @@ link (`UPGRADE_URL`, with `client_reference_id=<GitHub account id>` appended), a
 
 ### Paid features
 
-- **Alerts** (Pro, Team): `npx wrangler kv key put --binding ISOKLO_KV "alerts:<account id>" "https://hooks.slack.com/services/…"`
+- **Alerts** (Team): `npx wrangler kv key put --binding ISOKLO_KV "alerts:<account id>" "https://hooks.slack.com/services/…"`
   (Slack or Discord incoming webhook). Blocked pull requests post a short summary there.
 - **Organisation policy** (Team): commit `isoklo.config.json` to the organisation's `.github` repository. Its rule
-  levels and forbidden paths override every repository's.
-- **Receipt export** (Team): receipts are stored for 400 days. Issue an API key with
+  levels, forbidden paths and waiver setting override every repository's.
+- **Waivers** (Team): `/isoklo waive` and `/isoklo revoke` in pull request comments, stored per pull request for 400
+  days (`waivers:<owner>/<repo>#<number>`). On the free plan the app answers with how to accept a finding in the policy.
+- **Receipt history** (Team): receipts are stored for 400 days. Issue an API key with
   `npx wrangler kv key put --binding ISOKLO_KV "apikey:<sha256 of the key>" "<org login>"`, then
-  `GET /api/receipts/<owner>/<repo>/<commit sha>` with `Authorization: Bearer <key>`.
+  `GET /api/receipts/<owner>/<repo>` (100 receipts a page, `?cursor=` for the next) or
+  `GET /api/receipts/<owner>/<repo>/<commit sha>`, with `Authorization: Bearer <key>`.
 
 ## Settings
 
@@ -117,12 +143,13 @@ link (`UPGRADE_URL`, with `client_reference_id=<GitHub account id>` appended), a
 | `GITHUB_APP_ID` | var | The app's numeric id. |
 | `GITHUB_APP_PRIVATE_KEY` | secret | The app's private key (PEM; GitHub's PKCS#1 works as is). |
 | `GITHUB_WEBHOOK_SECRET` | secret | The app's webhook secret. |
-| `RECEIPT_SIGNING_KEY` | secret | HMAC key for signed receipts. |
+| `RECEIPT_SIGNING_JWK` | secret | Ed25519 private key (JWK, from `npx isoklo keygen`) for receipts anyone can verify. Wins over `RECEIPT_SIGNING_KEY`. |
+| `RECEIPT_SIGNING_KEY` | secret | HMAC key for signed receipts, when no Ed25519 key is set. |
 | `STRIPE_WEBHOOK_SECRET` | secret | Stripe endpoint signing secret. |
 | `BILLING_MODE` | var | `off` (default) or `on`. |
-| `UPGRADE_URL` | var | Marketplace listing or Stripe Payment Link. |
+| `UPGRADE_URL` | var | Where upgrade links point: the pricing page (default), a Stripe Payment Link or the Marketplace listing. |
 | `LICENSES`, `STRIPE_PRICE_PLANS`, `MARKETPLACE_PLAN_MAP` | var | JSON objects, see above. |
 | `ONLINE` | var | `false` turns npm and PyPI lookups off. |
 | `COMMENT_ON_PASS` | var | `true` posts a comment on passing pull requests too. |
 | `GITHUB_API_URL` | var | For GitHub Enterprise Server (`https://ghe.example.com/api/v3`). |
-| `ISOKLO_KV` | KV binding | Plans, installations, receipts, delivery de-duplication. |
+| `ISOKLO_KV` | KV binding | Plans, installations, receipts, waivers, private-repository counts, delivery de-duplication. |

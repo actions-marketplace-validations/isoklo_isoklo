@@ -4,7 +4,12 @@
 export interface KV {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
+  delete?(key: string): Promise<void>;
+  list?(options: { prefix: string; limit?: number; cursor?: string }): Promise<{ keys: { name: string }[]; list_complete: boolean; cursor?: string }>;
 }
+
+/** Where "upgrade" and "pricing" links point when UPGRADE_URL is not set. */
+export const DEFAULT_UPGRADE_URL = "https://euklo.com/isoklo/#pricing";
 
 export interface Env {
   /** Numeric GitHub App id, from the app's settings page. */
@@ -17,13 +22,18 @@ export interface Env {
   GITHUB_API_URL?: string;
   APP_SLUG?: string;
   PUBLIC_URL?: string;
-  /** Where "upgrade" links point: the Marketplace listing or a Stripe Checkout link. */
+  /** Where "upgrade" links point: a Stripe Payment Link, the Marketplace listing, or the pricing page (the default). */
   UPGRADE_URL?: string;
   /** "off": every repository gets every feature. "on": plans are enforced. */
   BILLING_MODE?: string;
   /** JSON object: account login or id to plan, for licences sold by hand. */
   LICENSES?: string;
-  /** HMAC key for signed evidence receipts (paid plans). Secret. */
+  /**
+   * Ed25519 private key (a JWK, from `npx isoklo keygen`) for evidence receipts anyone can verify; its public half is
+   * served at /.well-known/isoklo-receipt-keys.json. Takes precedence over RECEIPT_SIGNING_KEY. Secret.
+   */
+  RECEIPT_SIGNING_JWK?: string;
+  /** HMAC key for signed evidence receipts, used when RECEIPT_SIGNING_JWK is not set. Secret. */
   RECEIPT_SIGNING_KEY?: string;
   /** Stripe webhook signing secret (whsec_...). Secret. */
   STRIPE_WEBHOOK_SECRET?: string;

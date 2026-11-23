@@ -13,7 +13,8 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLI = join(ROOT, "dist", "cli.js");
 
 const f = (level, path, line, message = "m", extra = {}) => ({
-  rule: "weakened-tests", id: "x", level, message, fix: "do the fix", evidence: path ? [{ path, line, text: "t" }] : [], ...extra,
+  rule: "weakened-tests", id: "x", ruleId: "tamper/assertions-removed", severity: "high", level, message, fix: "do the fix",
+  evidence: path ? [{ path, line, text: "t" }] : [], ...extra,
 });
 const summary = (findings, passes = []) => ({
   base: "origin/main", head: "HEAD", filesChanged: 2, results: [{ rule: "weakened-tests", findings, passes, stats: {} }],
@@ -30,16 +31,31 @@ test("annotations: level -> command, placed on the evidence line, message and fi
     f("review", "package.json", 3),
     f("info", null, 0),
   ]));
-  assert.equal(out[0], "::error file=test/a.test.js,line=6,title=Isoklo%3A blocked::Tests weakened: 1 assertion removed.%0Afix: do the fix");
-  assert.match(out[1], /^::warning file=package\.json,line=3,/);
-  assert.match(out[2], /^::notice title=Isoklo%3A info::/);
+  // The same title the GitHub App's check run uses, so a pull request reads the same either way.
+  assert.equal(out[0], "::error file=test/a.test.js,line=6,title=Blocked · HIGH · tamper/assertions-removed::Tests weakened: 1 assertion removed.%0AFix: do the fix");
+  assert.match(out[1], /^::warning file=package\.json,line=3,title=Review · HIGH · /);
+  assert.match(out[2], /^::notice title=Note · HIGH · tamper\/assertions-removed::/);
 });
 
 test("annotations: at most 10 per type, blocked first; allowed findings show the reason", () => {
   const many = Array.from({ length: 14 }, (_, i) => f("blocked", `t/${i}.test.js`, 1));
   const out = annotations(summary([...many, f("review", "x", 1, "m", { allowedBecause: "label applied" })]));
   assert.equal(out.filter((l) => l.startsWith("::error")).length, PER_TYPE_LIMIT);
-  assert.match(out.find((l) => l.startsWith("::warning")), /allowed: label applied/);
+  assert.match(out.find((l) => l.startsWith("::warning")), /Allowed: label applied/);
+});
+
+test("annotations: one card per file, line and rule, never two identical cards on the same line", () => {
+  // Two assertions removed side by side both anchor to the line where they were removed (the R24 case on isoklo-demo).
+  const removed = f("blocked", "test/invoice.test.js", 25, "Tests weakened: 2 assertions removed.", {
+    evidence: [
+      { path: "test/invoice.test.js", line: 25, text: "assert.equal(invoice.tax, 11138);", anchor: { path: "test/invoice.test.js", line: 24 } },
+      { path: "test/invoice.test.js", line: 26, text: "assert.equal(invoice.total, 146138);", anchor: { path: "test/invoice.test.js", line: 24 } },
+    ],
+  });
+  const out = annotations(summary([removed, { ...removed, message: "Tests weakened: 2 assertions removed." }]));
+  assert.equal(out.length, 1, out.join("\n"));
+  assert.match(out[0], /^::error file=test\/invoice\.test\.js,line=24,/);
+  assert.match(out[0], /Removed here: lines 25 and 26 of the previous version\./);
 });
 
 test("job summary lists every finding, escapes table cells, and shows the verdict", () => {
@@ -90,7 +106,7 @@ test("in Actions: annotations on the changed line, job summary written, exit 1",
   const r = inActions(t, blockedRepo(t));
   assert.equal(r.code, 1);
   // The removed assertion was old line 3; in the new file the removal sits after line 2, which is where GitHub can draw it.
-  assert.match(r.out, /^::error file=test\/a\.test\.js,line=2,title=Isoklo%3A blocked::Tests weakened/m);
+  assert.match(r.out, /^::error file=test\/a\.test\.js,line=2,title=Blocked · HIGH · tamper\/assertions-removed::Tests weakened/m);
   assert.match(r.summary, /## isoklo · blocked/);
   assert.match(r.summary, /`test\/a\.test\.js:3`/);
 });

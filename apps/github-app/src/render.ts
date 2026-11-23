@@ -1,5 +1,5 @@
 /** What the app writes on a pull request: the check run (with line annotations) and the one summary comment. */
-import { findingsOf, markdownCode as code, markdownSummary, markdownText, ruleMeta, verdictOf, type CheckSummary, type Receipt } from "isoklo/engine";
+import { findingsOf, lineAnnotations, markdownCode as code, markdownSummary, markdownText, verdictOf, type CheckSummary, type Receipt } from "isoklo/engine";
 import type { Annotation, CheckRunOutput } from "./github.js";
 import type { Entitlements } from "./plans.js";
 
@@ -8,25 +8,20 @@ export const COMMENT_MARKER = "<!-- isoklo:summary -->";
 const MAX_ANNOTATIONS = 200;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/**
+ * One annotation per (file, line, rule), from the engine's shared grouping: the same cards the GitHub Action draws,
+ * never two identical cards stacked on one line (two assertions removed side by side used to make two).
+ */
 export function annotationsFor(s: CheckSummary): Annotation[] {
-  const out: Annotation[] = [];
-  for (const f of findingsOf(s)) {
-    for (const e of f.evidence.slice(0, 5)) {
-      if (out.length >= MAX_ANNOTATIONS) return out;
-      const at = e.anchor ?? { path: e.path, line: e.line };
-      const meta = f.ruleId ? ruleMeta(f.ruleId) : undefined;
-      out.push({
-        path: at.path,
-        start_line: Math.max(1, at.line),
-        end_line: Math.max(1, at.line),
-        annotation_level: f.level === "blocked" ? "failure" : f.level === "review" ? "warning" : "notice",
-        title: `${f.level === "blocked" ? "Blocked" : f.level === "review" ? "Review" : "Note"} · ${(f.severity ?? "info").toUpperCase()} · ${f.ruleId ?? f.id}`,
-        message: `${f.message}\n${f.allowedBecause !== undefined ? `Allowed: ${f.allowedBecause}` : `Fix: ${f.fix}`}`.slice(0, 64_000),
-        ...(meta ? { raw_details: meta.why } : {}),
-      });
-    }
-  }
-  return out;
+  return lineAnnotations(s, { placesPerFinding: 5 }).slice(0, MAX_ANNOTATIONS).map((a) => ({
+    path: a.path,
+    start_line: a.line,
+    end_line: a.line,
+    annotation_level: a.level === "blocked" ? "failure" : a.level === "review" ? "warning" : "notice",
+    title: a.title,
+    message: a.message,
+    ...(a.why !== null ? { raw_details: a.why } : {}),
+  }));
 }
 
 export interface Coverage {
@@ -47,12 +42,13 @@ export function checkRunOutput(s: CheckSummary, receipt: Receipt, ent: Entitleme
   const findings = findingsOf(s);
   const blocked = findings.filter((f) => f.level === "blocked").length;
   const review = findings.filter((f) => f.level === "review").length;
+  const waived = findings.filter((f) => f.waiver !== undefined).length;
   const unlisted = Math.max(0, coverage.total - coverage.listed);
   const incomplete = unlisted > 0 || coverage.unreadable.length > 0;
   const title = verdict === "blocked"
     ? `Blocked: ${plural(blocked, "problem")} to fix before merge`
     : incomplete ? `Not fully checked: ${plural(unlisted + coverage.unreadable.length, "file")} could not be read`
-      : review > 0 ? `Passed, ${review} to review` : "Passed";
+      : [review > 0 ? `Passed, ${review} to review` : "Passed", waived > 0 ? `${waived} waived` : ""].filter(Boolean).join(" · ");
   const notes = [
     unlisted > 0 ? `${plural(unlisted, "file")} of ${coverage.total} were not listed by GitHub's API (it lists at most 3,000).` : "",
     coverage.unreadable.length > 0 ? `${plural(coverage.unreadable.length, "file")} could not be read through the GitHub API (a diff too large): ${coverage.unreadable.slice(0, 10).map((p) => code(p)).join(", ")}.` : "",
@@ -72,20 +68,24 @@ export function checkRunOutput(s: CheckSummary, receipt: Receipt, ent: Entitleme
 
 export function commentBody(s: CheckSummary, receipt: Receipt, ent: Entitlements, checkUrl: string | null): string {
   const body = markdownSummary(s, { receipt, receiptJson: ent.signedReceipts, maxFindings: 25 });
-  return `${COMMENT_MARKER}\n${body}\n\n<sub>${checkUrl ? `[Line-by-line findings in the isoklo check](${checkUrl}) · ` : ""}This comment updates in place on every push.</sub>\n`;
+  const open = findingsOf(s).some((f) => f.level === "blocked" || f.level === "review");
+  const waive = open && ent.waivers
+    ? "A false positive? A maintainer other than the author can accept one finding with a comment: `/isoklo waive <rule-id> <reason>`. "
+    : "";
+  return `${COMMENT_MARKER}\n${body}\n\n<sub>${checkUrl ? `[Line-by-line findings in the isoklo check](${checkUrl}) · ` : ""}${waive}This comment updates in place on every push.</sub>\n`;
 }
 
-export function upsellOutput(upgradeUrl: string, accountId: number): CheckRunOutput {
+export function upsellOutput(upgradeUrl: string, accountId: number, used: number, limit: number | null): CheckRunOutput {
   const link = upgradeUrl.includes("?") ? `${upgradeUrl}&client_reference_id=${accountId}` : `${upgradeUrl}?client_reference_id=${accountId}`;
   return {
-    title: "Private repositories need Isoklo Pro",
+    title: "Private repository limit reached on the free plan",
     summary: [
       "## isoklo · not checked",
       "",
-      "This repository is private. Isoklo checks public repositories for free; private repositories are part of **Isoklo Pro** and **Isoklo Team**.",
+      `This repository is private. The free plan checks every public repository and up to ${plural(limit ?? 0, "private repository", "private repositories")} per account; this account already uses ${used}.`,
       "",
-      `- [Upgrade](${link}): private repositories, signed evidence receipts, alerts; Team adds organisation-wide policy.`,
-      "- Or run the same checks yourself in CI with `npx isoklo init --ci`. The CLI is free for any repository.",
+      `- [Isoklo Team](${link}): every private repository, organisation-wide policy, maintainer waivers, stored receipts and alerts, for one flat price per organisation.`,
+      "- Or run the same checks yourself in CI with `npx isoklo init --ci`. The CLI and the GitHub Action are free for any repository.",
       "",
       "<sub>Nothing was approved: this check is neutral, so it does not pass a required gate.</sub>",
     ].join("\n"),

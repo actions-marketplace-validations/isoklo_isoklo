@@ -2,6 +2,46 @@
 
 All notable changes to Isoklo are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.3.0 · 2026-11-23
+
+### Security
+- **A comment inside a change no longer accepts that change.** An `isoklo: allow-test-change <reason>` comment that a
+  pull request adds used to turn its test blocks into a review, which passes the check, so an agent could approve its
+  own deleted assertions with one line. The comment is now shown to reviewers as the change's own explanation and does
+  not change the verdict, and an empty marker no longer prints the marker's syntax. To accept a deliberate test change,
+  use a maintainer waiver in the GitHub App, `--allow-test-change` from a maintainer-only label in CI, or the baseline.
+  **This can block pull requests that 0.2 passed.**
+
+### Added
+- **Maintainer waivers in the GitHub App.** `/isoklo waive <rule-id or fingerprint> <reason>` on a pull request, by a
+  person with write access who is not its author (checked with GitHub), re-runs the check with that finding accepted.
+  The waiver (who, why, when, which finding) is recorded in the check, the summary comment and the receipt;
+  `/isoklo revoke` takes it back. Bots are never answered. New policy setting `waivers.allowAuthor` for repositories
+  with a single maintainer. The App now subscribes to `issue_comment` and asks for `issues: read`.
+- **`--allow-test-change <reason>`** for `isoklo check`, and the matching `allow-test-change` Action input, to pass from
+  a label only maintainers can apply (`examples/github/isoklo.yml` wires `isoklo-allow-tests`).
+- **Ed25519-signed receipts anyone can verify.** `ISOKLO_RECEIPT_KEY` (CLI) or `RECEIPT_SIGNING_JWK` (App) may now hold
+  an Ed25519 private key (a JWK); the receipt carries the public key and key id. `isoklo verify` checks the signature and
+  whether the key is one you trust: by default the GitHub App's, published at
+  `/.well-known/isoklo-receipt-keys.json`; `--key` and `--jwks` trust others, `--offline` skips the download. A valid
+  signature from a key you do not trust exits `1`. HMAC signing still works for teams that share a secret.
+- **`isoklo keygen`**: a new Ed25519 signing key (private on stdout, public key set on stderr).
+- **Receipt history**: `GET /api/receipts/<owner>/<repo>` lists a repository's stored receipts (Team, API key).
+- `isoklo verify --json`.
+
+### Changed
+- **One annotation per file, line and rule**, in both the GitHub App and the GitHub Action. Removed lines anchor to the
+  place they were removed, so two assertions deleted side by side used to draw two identical cards on one line; they
+  now draw one that names both lines. The Action's annotation titles match the App's (`Blocked · HIGH · rule-id`).
+- **Plans**: Open (free: every public repository, up to 2 private repositories, signed receipts), Team (every private
+  repository, organisation policy, waivers, receipt history, alerts) and Enterprise. The old `pro` plan name reads as
+  Team. Private repositories on the free plan are counted per account in KV. Billing stays off by default: with
+  `BILLING_MODE = "off"` every installation keeps every feature, as before.
+- The App's upgrade link defaults to https://euklo.com/isoklo/#pricing (the Marketplace listing it pointed to does not
+  exist yet).
+- `--help` lists every command and links to the GitHub App, https://euklo.com/isoklo and the source. The npm
+  `homepage` is https://euklo.com/isoklo.
+
 ## 0.2.0 · 2026-11-22 (Isoklo v2)
 
 Every 0.1 rule, flag, exit code and JSON field still works the same way. New checks can block changes that 0.1 passed,

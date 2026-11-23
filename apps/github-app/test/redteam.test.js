@@ -199,7 +199,7 @@ test("redteam: alerts cannot ping a Slack channel or everyone on Discord", async
 test("redteam: a paid Marketplace plan with an unknown name is never recorded as free", async () => {
   const { send, kv } = setup({ env: { BILLING_MODE: "on" } });
   await send("marketplace_purchase", { action: "purchased", marketplace_purchase: { account: { id: 4242, login: "acme" }, plan: { id: 77, name: "Growth", price_model: "FLAT_RATE", monthly_price_in_cents: 4900 } } });
-  assert.equal(JSON.parse(await kv.get("plan:4242")).plan, "pro");
+  assert.equal(JSON.parse(await kv.get("plan:4242")).plan, "team");
   const bad = await send("marketplace_purchase", { action: "purchased" });
   assert.equal(bad.status, 400);
 });

@@ -5,7 +5,8 @@ import { readFileSync } from "node:fs";
 import { createApp } from "../dist/index.js";
 import { pemToPkcs8 } from "../dist/crypto.js";
 import { ENGINE_VERSION } from "../dist/version.js";
-import { appKeys, fakeGitHub, MemoryKV, pullRequestEvent, stripeRequest, webhook } from "./fake-github.js";
+import { appKeys, fakeGitHub, issueCommentEvent, MemoryKV, pullRequestEvent, stripeRequest, webhook } from "./fake-github.js";
+import { ed25519GenerateJwk, trustedKeysFrom, verifyReceipt } from "isoklo/engine";
 
 const SECRET = "webhook-secret-for-tests";
 const NOW = new Date("2026-11-22T10:00:00Z");
@@ -29,9 +30,11 @@ const CLEAN_PR = {
   "test/cart/total.test.ts": TEST_FILE.replace("});\n", '  expect(total([0.1, 0.2])).toBe(0.3);\n});\n'),
 };
 
-function setup({ head = AGENT_PR, base = BASE, isPrivate = false, env = {}, failFiles = false, org = null, body = "" } = {}) {
+const COLLABORATORS = { maintainer: "write", owner: "admin", reader: "read", "agent-dev": "write" };
+
+function setup({ head = AGENT_PR, base = BASE, isPrivate = false, env = {}, failFiles = false, org = null, body = "", collaborators = COLLABORATORS } = {}) {
   const repos = {
-    "acme/shop": { private: isPrivate, commits: { base1: base, head1: head }, pulls: { 7: { base: "base1", head: "head1", body } } },
+    "acme/shop": { private: isPrivate, collaborators, commits: { base1: base, head1: head }, pulls: { 7: { base: "base1", head: "head1", body } } },
   };
   if (org) repos["acme/.github"] = { commits: { main: org } };
   const gh = fakeGitHub({ publicKey: keys.publicKey, appId: "123", repos, failFiles });
@@ -121,14 +124,38 @@ test("policy comes from the merge base: a pull request cannot turn off the rule 
   assert.ok(titles.some((t) => /tamper\/isoklo-config-changed/.test(t)));
 });
 
-test("billing on: a private repository without a plan gets a neutral upsell check, and no code is read", async () => {
-  const { gh, send, pr } = setup({ isPrivate: true, env: { BILLING_MODE: "on", UPGRADE_URL: "https://buy.stripe.com/test_abc" } });
+test("billing on, free plan: up to two private repositories are checked; a third gets a neutral upsell and no code is read", async () => {
+  const { gh, send, pr, kv } = setup({ isPrivate: true, env: { BILLING_MODE: "on", UPGRADE_URL: "https://buy.stripe.com/test_abc" } });
+  // This account already uses its two private repositories.
+  await kv.put("private-repos:4242", JSON.stringify(["1001", "1002"]));
   await send("pull_request", pullRequestEvent({ pr, isPrivate: true }));
   const [run] = checkRuns(gh);
   assert.equal(run.body.conclusion, "neutral");
-  assert.match(run.body.output.title, /Private repositories need Isoklo Pro/);
+  assert.match(run.body.output.title, /Private repository limit reached on the free plan/);
+  assert.match(run.body.output.summary, /up to 2 private repositories per account; this account already uses 2/);
   assert.match(run.body.output.summary, /https:\/\/buy\.stripe\.com\/test_abc\?client_reference_id=4242/);
   assert.equal(gh.writes.length, 1);
+});
+
+test("billing on, free plan: a first private repository is checked, signed, and counted", async () => {
+  const { gh, send, pr, kv } = setup({ isPrivate: true, env: { BILLING_MODE: "on", RECEIPT_SIGNING_KEY: "receipt-key" } });
+  await send("pull_request", pullRequestEvent({ pr, isPrivate: true }));
+  assert.equal(completed(gh).conclusion, "action_required");
+  assert.deepEqual(JSON.parse(await kv.get("private-repos:4242")), ["acme/shop"]);
+  // Signed receipts are on the free plan too; stored receipts are not.
+  assert.match(gh.comments.get("acme/shop#7")[0].body, /HMAC-signed/);
+  assert.equal(await kv.get("receipt:acme/shop:head1"), null);
+  // Public repositories never count.
+  const pub = setup({ env: { BILLING_MODE: "on" } });
+  await pub.send("pull_request", pullRequestEvent({ pr: pub.pr }));
+  assert.equal(await pub.kv.get("private-repos:4242"), null);
+});
+
+test("billing off (launch): private repositories are checked with every feature, whatever the account", async () => {
+  const { gh, send, pr, kv } = setup({ isPrivate: true });
+  await kv.put("private-repos:4242", JSON.stringify(["1001", "1002"]));
+  await send("pull_request", pullRequestEvent({ pr, isPrivate: true }));
+  assert.equal(completed(gh).conclusion, "action_required");
 });
 
 test("billing on: a Marketplace purchase unlocks private repositories, signed receipts and stored receipts", async () => {
@@ -158,7 +185,8 @@ test("billing on: Stripe checkout and cancellation move the plan; forged or stal
   assert.equal((await app.fetch(stripeRequest("whsec_wrong", checkout, now), ENV)).status, 400);
   assert.equal((await app.fetch(stripeRequest("whsec_test", checkout, now - 3600), ENV)).status, 400, "replayed an hour later");
   assert.equal((await app.fetch(stripeRequest("whsec_test", checkout, now), ENV)).status, 200);
-  assert.equal(JSON.parse(await kv.get("plan:4242")).plan, "pro");
+  // "pro" was the plan's name before 0.3: it reads as team.
+  assert.equal(JSON.parse(await kv.get("plan:4242")).plan, "team");
   const upgrade = { type: "customer.subscription.updated", data: { object: { customer: "cus_1", status: "active", items: { data: [{ price: { id: "price_team" } }] }, current_period_end: now + 86400 * 30 } } };
   await app.fetch(stripeRequest("whsec_test", upgrade, now), ENV);
   assert.equal(JSON.parse(await kv.get("plan:4242")).plan, "team");
@@ -208,6 +236,125 @@ test("draft pull requests and other actions are left alone", async () => {
   assert.equal((await (await send("pull_request", pullRequestEvent({ action: "labeled", pr }))).json()).ignored, "pull_request.labeled");
   await send("pull_request", pullRequestEvent({ pr: { ...pr, draft: true } }));
   assert.equal(checkRuns(gh).length, 0);
+});
+
+// ---------------------------------------------------------------- annotations: one card per line and rule
+test("two assertions removed side by side draw one annotation, not two identical cards on the same line", async () => {
+  const head = { ...BASE, "test/cart/total.test.ts": 'test("total", () => {\n});\n' };
+  const { gh, send, pr } = setup({ head });
+  await send("pull_request", pullRequestEvent({ pr }));
+  const ann = completed(gh).output.annotations;
+  const removed = ann.filter((a) => /tamper\/assertions-removed/.test(a.title));
+  assert.equal(removed.length, 1, JSON.stringify(removed, null, 2));
+  assert.equal(removed[0].title, "Blocked · HIGH · tamper/assertions-removed");
+  assert.match(removed[0].message, /Removed here: lines 2 and 3 of the previous version\./);
+  const keys = ann.map((a) => `${a.path}:${a.start_line}:${a.title}`);
+  assert.equal(new Set(keys).size, keys.length, "no two annotations share a file, line and title");
+});
+
+// ---------------------------------------------------------------- waivers
+const waive = (body, extra = {}) => issueCommentEvent({ body, ...extra });
+
+test("waivers: a maintainer waives both findings, the check passes, and the record shows who and why", async () => {
+  const { gh, send, pr, kv, app } = setup();
+  await send("pull_request", pullRequestEvent({ pr }));
+  assert.equal(completed(gh).conclusion, "action_required");
+  await send("issue_comment", waive("/isoklo waive tamper/test-disabled the flaky total test moved to test/cart/total.e2e.ts in #12"));
+  await send("issue_comment", waive("/isoklo waive tamper/assertions-removed total([]) is now covered by the property test in #12", { id: 5556 }));
+  const done = completed(gh);
+  assert.equal(done.conclusion, "success");
+  assert.equal(done.output.title, "Passed · 2 waived");
+  assert.match(done.output.summary, /\*\*Waived by maintainers\*\* \(2\)/);
+  assert.ok(done.output.annotations.every((a) => a.annotation_level === "notice"));
+  assert.ok(done.output.annotations.some((a) => /^Waived by @maintainer: the flaky total test moved/.test(a.message.split("\n").at(-1))));
+  // Recorded: a reaction on each command, the waivers in the store, and in the receipt (stored on Team).
+  assert.equal(gh.writes.filter((w) => /\/reactions$/.test(w.path)).length, 2);
+  assert.equal(JSON.parse(await kv.get("waivers:acme/shop#7")).length, 2);
+  const receipt = JSON.parse(await kv.get("receipt:acme/shop:head1"));
+  assert.equal(receipt.verdict, "passed");
+  assert.deepEqual(receipt.waivers.map((w) => [w.target, w.by]).sort(), [["tamper/assertions-removed", "@maintainer"], ["tamper/test-disabled", "@maintainer"]]);
+  assert.deepEqual(app.waivers.map((w) => w.status), ["recorded", "recorded"]);
+  // Revoking puts the block back.
+  await send("issue_comment", waive("/isoklo revoke tamper/test-disabled", { id: 5557 }));
+  assert.equal(completed(gh).conclusion, "action_required");
+});
+
+test("waivers are refused for readers, for the author, for bots and without a reason; nothing changes", async () => {
+  const { gh, send, pr, kv, app } = setup();
+  await send("pull_request", pullRequestEvent({ pr }));
+  const replies = () => gh.writes.filter((w) => w.method === "POST" && w.path === "/issues/7/comments" && /isoklo:waiver-reply/.test(w.body.body)).map((w) => w.body.body);
+  await send("issue_comment", waive("/isoklo waive tamper/test-disabled I can read this repository", { login: "reader" }));
+  assert.match(replies().at(-1), /only people with write access to acme\/shop can waive/);
+  await send("issue_comment", waive("/isoklo waive tamper/test-disabled my own pull request is fine, honestly", { login: "agent-dev" }));
+  assert.match(replies().at(-1), /the author of a pull request cannot waive its findings/);
+  await send("issue_comment", waive("/isoklo waive tamper/test-disabled ok"));
+  assert.match(replies().at(-1), /needs a reason of at least 10 characters/);
+  const before = replies().length;
+  await send("issue_comment", waive("/isoklo waive tamper/test-disabled a bot thinks this is fine to merge", { login: "helper[bot]", type: "Bot" }));
+  assert.equal(replies().length, before, "bots are never answered");
+  assert.equal(await kv.get("waivers:acme/shop#7"), null);
+  assert.equal(completed(gh).conclusion, "action_required");
+  assert.deepEqual(app.waivers.map((w) => w.status), ["refused", "refused", "refused", "ignored"]);
+  // Ordinary comments cost nothing: no token, no API call.
+  const writes = gh.writes.length;
+  const res = await send("issue_comment", waive("Looks good to me, thanks!"));
+  assert.equal((await res.json()).ignored, "not an /isoklo command");
+  assert.equal(gh.writes.length, writes);
+});
+
+test("waivers: a single-maintainer repository can let the author waive, through the base branch's policy", async () => {
+  const policy = { "isoklo.config.json": JSON.stringify({ waivers: { allowAuthor: true } }) };
+  const { gh, send, pr } = setup({ base: { ...BASE, ...policy }, head: { ...AGENT_PR, ...policy } });
+  await send("pull_request", pullRequestEvent({ pr }));
+  await send("issue_comment", waive("/isoklo waive tamper/test-disabled skipped on purpose until the fixture lands", { login: "agent-dev" }));
+  await send("issue_comment", waive("/isoklo waive tamper/assertions-removed covered again in the follow-up pull request", { login: "agent-dev", id: 5556 }));
+  assert.equal(completed(gh).conclusion, "success");
+});
+
+test("waivers on the free plan point to the base branch's policy instead (billing on)", async () => {
+  const { gh, send, pr } = setup({ env: { BILLING_MODE: "on" } });
+  await send("pull_request", pullRequestEvent({ pr }));
+  await send("issue_comment", waive("/isoklo waive tamper/test-disabled the test moved to the e2e suite in #12"));
+  const reply = gh.writes.filter((w) => w.method === "POST" && w.path === "/issues/7/comments").at(-1).body.body;
+  assert.match(reply, /Waivers are part of Isoklo Team/);
+  assert.equal(completed(gh).conclusion, "action_required");
+});
+
+// ---------------------------------------------------------------- receipts anyone can verify
+test("Ed25519 receipts: the public key is published, the comment's receipt verifies against it, the private key never leaks", async () => {
+  const jwk = await ed25519GenerateJwk();
+  const { gh, send, pr, app, ENV, kv } = setup({ env: { RECEIPT_SIGNING_JWK: JSON.stringify(jwk), RECEIPT_SIGNING_KEY: "older-hmac-key" } });
+  const res = await app.fetch(new Request("https://app.isoklo.test/.well-known/isoklo-receipt-keys.json"), ENV);
+  assert.equal(res.status, 200);
+  const text = await res.text();
+  assert.ok(!text.includes(jwk.d), "only the public half is published");
+  const jwks = JSON.parse(text);
+  assert.deepEqual(jwks.keys.map((k) => [k.kty, k.crv, k.x, k.kid, k.alg]), [["OKP", "Ed25519", jwk.x, jwk.kid, "EdDSA"]]);
+
+  await send("pull_request", pullRequestEvent({ pr }));
+  const comment = gh.comments.get("acme/shop#7")[0].body;
+  assert.match(comment, /Ed25519-signed \(key `[0-9a-f]{16}`\)/);
+  assert.match(comment, /npx isoklo@latest verify receipt\.json/);
+  const receipt = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(comment)[1]);
+  const v = await verifyReceipt(receipt, { trustedKeys: trustedKeysFrom(jwks, "the Isoklo GitHub App's published key") });
+  assert.deepEqual([v.digestValid, v.signatureValid, v.trusted], [true, true, true]);
+  assert.ok(!comment.includes(jwk.d));
+
+  // Receipt history for audits, with an API key bound to the account.
+  const { createHash } = await import("node:crypto");
+  await kv.put(`apikey:${createHash("sha256").update("acme-audit-key").digest("hex")}`, "acme");
+  const list = await app.fetch(new Request("https://app.isoklo.test/api/receipts/acme/shop", { headers: { authorization: "Bearer acme-audit-key" } }), ENV);
+  assert.equal(list.status, 200);
+  const history = await list.json();
+  assert.equal(history.receipts.length, 1);
+  assert.equal(history.receipts[0].integrity.digest, receipt.integrity.digest);
+  assert.equal((await app.fetch(new Request("https://app.isoklo.test/api/receipts/acme/shop"), ENV)).status, 401);
+});
+
+test("without a signing key the key set is empty, so verify reports an unsigned or HMAC receipt honestly", async () => {
+  const { app, ENV } = setup();
+  const res = await app.fetch(new Request("https://app.isoklo.test/.well-known/isoklo-receipt-keys.json"), ENV);
+  assert.deepEqual(await res.json(), { keys: [] });
 });
 
 test("PKCS#1 keys from GitHub are wrapped as PKCS#8 for Web Crypto; the engine version matches the package", () => {

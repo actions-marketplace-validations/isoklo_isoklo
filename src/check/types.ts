@@ -38,6 +38,8 @@ export interface Finding {
   severity?: Severity;
   /** v2: stable id for this finding (rule, file and evidence text, not line numbers), for baselines and SARIF. */
   fingerprint?: string;
+  /** Set when a maintainer waived this finding (the GitHub App's `/isoklo waive`): who, why and when. */
+  waiver?: { by: string; reason: string; at?: string };
 }
 
 export interface RuleResult {

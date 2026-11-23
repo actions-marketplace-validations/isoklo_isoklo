@@ -14,6 +14,15 @@ export class MemoryKV {
   constructor() { this.map = new Map(); }
   async get(key) { return this.map.has(key) ? this.map.get(key) : null; }
   async put(key, value) { this.map.set(key, String(value)); }
+  async delete(key) { this.map.delete(key); }
+  /** Like Cloudflare KV's list: keys by prefix, sorted, in pages. */
+  async list({ prefix, limit = 1000, cursor }) {
+    const all = [...this.map.keys()].filter((k) => k.startsWith(prefix)).sort();
+    const start = cursor ? Number(cursor) : 0;
+    const keys = all.slice(start, start + limit).map((name) => ({ name }));
+    const done = start + limit >= all.length;
+    return { keys, list_complete: done, ...(done ? {} : { cursor: String(start + limit) }) };
+  }
 }
 
 /** A patch with full context, as GitHub's API returns, built from a longest-common-subsequence line diff. */
@@ -91,6 +100,14 @@ export function fakeGitHub({
     if (!repo) return json(404, { message: "Not Found" });
 
     if (rest === "") return json(200, { default_branch: repo.defaultBranch ?? "main", private: repo.private === true });
+    // Access levels as GitHub reports them: admin, write (maintain), read (triage), none.
+    if ((m = /^\/collaborators\/([^/]+)\/permission$/.exec(rest))) {
+      return json(200, { permission: repo.collaborators?.[decodeURIComponent(m[1])] ?? "none" });
+    }
+    if ((m = /^\/issues\/comments\/(\d+)\/reactions$/.exec(rest)) && method === "POST") {
+      writes.push({ method, path: rest, body });
+      return json(201, { id: nextId++, content: body.content });
+    }
     if ((m = /^\/pulls\/(\d+)$/.exec(rest))) {
       const pr = repo.pulls[m[1]];
       return pr ? json(200, prObject(full, Number(m[1]), pr)) : json(404, {});
@@ -152,6 +169,7 @@ export function fakeGitHub({
 function prObject(full, number, pr) {
   return {
     number, draft: pr.draft === true, body: pr.body ?? null, html_url: `https://github.com/${full}/pull/${number}`,
+    user: { login: pr.author ?? "agent-dev", type: "User" },
     base: { sha: pr.base, ref: "main" }, head: { sha: pr.head, ref: pr.headRef ?? "agent/change" },
     ...(pr.changedFiles !== undefined ? { changed_files: pr.changedFiles } : {}),
   };
@@ -163,6 +181,17 @@ export function pullRequestEvent({ action = "opened", full = "acme/shop", ownerI
     installation: { id: 99 },
     repository: { full_name: full, private: isPrivate, owner: { id: ownerId, login: full.split("/")[0] } },
     pull_request: prObject(full, number, pr),
+  };
+}
+
+/** A comment on a pull request, as GitHub's issue_comment event carries it. */
+export function issueCommentEvent({ full = "acme/shop", ownerId = 4242, isPrivate = false, number = 7, body, login = "maintainer", type = "User", id = 5555, author = "agent-dev" }) {
+  return {
+    action: "created",
+    installation: { id: 99 },
+    repository: { full_name: full, private: isPrivate, owner: { id: ownerId, login: full.split("/")[0] } },
+    issue: { number, pull_request: { url: `https://api.github.test/repos/${full}/pulls/${number}` }, user: { login: author } },
+    comment: { id, body, user: { login, type } },
   };
 }
 

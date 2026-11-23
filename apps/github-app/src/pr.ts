@@ -7,11 +7,12 @@ import {
   CONFIG_FILES, ConfigError, createReceipt, fileDiffsFromPullFiles, mergeOrgPolicy, parseConfig, rebuildDiff, runCheck, verdictOf, wholeFileDiff,
   type FetchLike, type IsokloConfig,
 } from "isoklo/engine";
-import type { Env } from "./env.js";
+import { DEFAULT_UPGRADE_URL, type Env } from "./env.js";
 import { GitHub, type PullRequest } from "./github.js";
-import { entitlementsFor } from "./plans.js";
+import { entitlementsFor, privateRepoAllowed } from "./plans.js";
 import { alert, CHECK_NAME, checkRunOutput, COMMENT_MARKER, commentBody, couldNotRunOutput, upsellOutput } from "./render.js";
 import { ENGINE_VERSION } from "./version.js";
+import { loadWaivers } from "./waivers.js";
 
 export interface Deps {
   fetch: typeof fetch;
@@ -20,12 +21,12 @@ export interface Deps {
 
 export interface PullRequestEvent {
   installation: { id: number };
-  repository: { full_name: string; private: boolean; owner: { id: number; login: string } };
+  repository: { id?: number; full_name: string; private: boolean; owner: { id: number; login: string } };
   pull_request: PullRequest;
 }
 
 export type Outcome =
-  | { status: "checked"; verdict: "passed" | "blocked"; checkRunId: number; comment: string; receiptDigest: string }
+  | { status: "checked"; verdict: "passed" | "blocked"; checkRunId: number; comment: string; receiptDigest: string; waived: string[] }
   | { status: "upsell"; checkRunId: number }
   | { status: "failed"; checkRunId: number | null; error: string }
   | { status: "skipped"; reason: string };
@@ -37,7 +38,7 @@ export const MAX_REGISTRY_LOOKUPS = 25;
 
 const TEXT_FILE =/\.(m?[jt]sx?|cjs|cts|json|jsonc|ya?ml|toml|md|mdc|txt|py|rb|go|rs|java|kt|cs|php|sh|ps1|env|cfg|ini|lock|sql|tf|html?|css|scss|vue|svelte)$|(^|\/)(\.[\w.-]+|Dockerfile|Makefile|Jenkinsfile|CODEOWNERS)$/i;
 
-async function policyAt(gh: GitHub, token: string, repo: string, ref: string | undefined): Promise<{ config: IsokloConfig; source: string | null; text: string | null }> {
+export async function policyAt(gh: GitHub, token: string, repo: string, ref: string | undefined): Promise<{ config: IsokloConfig; source: string | null; text: string | null }> {
   for (const file of CONFIG_FILES) {
     const text = await gh.content(token, repo, file, ref);
     if (text === null) continue;
@@ -54,12 +55,16 @@ export async function handlePullRequest(env: Env, e: PullRequestEvent, deps: Dep
   const token = await gh.installationToken(e.installation.id);
   const ent = await entitlementsFor(env, e.repository.owner, deps.now());
 
-  if (e.repository.private && !ent.privateRepos) {
-    const id = await gh.createCheckRun(token, repo, {
-      name: CHECK_NAME, head_sha: pr.head.sha, status: "completed", conclusion: "neutral",
-      output: upsellOutput(env.UPGRADE_URL ?? "https://github.com/marketplace/isoklo", e.repository.owner.id),
-    });
-    return { status: "upsell", checkRunId: id };
+  // Public repositories are never metered. A private one counts against the plan's limit (two on the free plan).
+  if (e.repository.private) {
+    const seat = await privateRepoAllowed(env.ISOKLO_KV, e.repository.owner.id, String(e.repository.id ?? repo.toLowerCase()), ent);
+    if (!seat.allowed) {
+      const id = await gh.createCheckRun(token, repo, {
+        name: CHECK_NAME, head_sha: pr.head.sha, status: "completed", conclusion: "neutral",
+        output: upsellOutput(env.UPGRADE_URL ?? DEFAULT_UPGRADE_URL, e.repository.owner.id, seat.used, seat.limit),
+      });
+      return { status: "upsell", checkRunId: id };
+    }
   }
 
   const checkRunId = await gh.createCheckRun(token, repo, { name: CHECK_NAME, head_sha: pr.head.sha, status: "in_progress", started_at: deps.now().toISOString() });
@@ -108,6 +113,8 @@ export async function handlePullRequest(env: Env, e: PullRequestEvent, deps: Dep
       }
     }
 
+    // Maintainer waivers recorded on this pull request (/isoklo waive), on plans that include them.
+    const waivers = ent.waivers ? await loadWaivers(env, repo, pr.number) : [];
     const summary = await runCheck(
       { files, before, after },
       {
@@ -119,11 +126,14 @@ export async function handlePullRequest(env: Env, e: PullRequestEvent, deps: Dep
         prBody: pr.body ?? null,
         // Each lookup is up to three requests; stay well inside a Worker's request budget.
         maxLookups: MAX_REGISTRY_LOOKUPS,
+        waivers,
       },
     );
+    // Ed25519 when the public-key secret is set (anyone can verify it); HMAC otherwise.
+    const signingKey = ent.signedReceipts ? env.RECEIPT_SIGNING_JWK ?? env.RECEIPT_SIGNING_KEY ?? null : null;
     const receipt = await createReceipt({
       summary, engineVersion: ENGINE_VERSION, mode: "pull_request", repository: repo, baseSha: mergeBase, headSha: pr.head.sha,
-      policyText: policy.text, signingKey: ent.signedReceipts ? env.RECEIPT_SIGNING_KEY ?? null : null, createdAt: deps.now(),
+      policyText: policy.text, signingKey, createdAt: deps.now(), waivers,
     });
     if (ent.storedReceipts && env.ISOKLO_KV) {
       await env.ISOKLO_KV.put(`receipt:${repo}:${pr.head.sha}`, JSON.stringify(receipt), { expirationTtl: 60 * 60 * 24 * 400 });
@@ -156,7 +166,8 @@ export async function handlePullRequest(env: Env, e: PullRequestEvent, deps: Dep
         console.error(`isoklo: the alert for ${repo}#${pr.number} failed; the check result stands.`);
       }
     }
-    return { status: "checked", verdict, checkRunId, comment, receiptDigest: receipt.integrity.digest };
+    const waived = [...new Set((receipt.waivers ?? []).map((w) => w.target))];
+    return { status: "checked", verdict, checkRunId, comment, receiptDigest: receipt.integrity.digest, waived };
   } catch (error) {
     const message = error instanceof ConfigError ? error.message : error instanceof Error ? error.message : String(error);
     await gh.completeCheckRun(token, repo, checkRunId, { status: "completed", conclusion: "failure", completed_at: deps.now().toISOString(), output: couldNotRunOutput(message) })
