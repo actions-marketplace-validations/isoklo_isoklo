@@ -3,7 +3,7 @@
   "url": "https://euklo.com/isoklo",
   "setup_url": "https://euklo.com/isoklo/#setup",
   "setup_on_update": false,
-  "description": "Your unit tests passed. The agent deleted the assertions. Isoklo blocks it in 2 seconds. A deterministic merge gate for AI-written pull requests: 62 fixed rules, no model, no YAML. It blocks deleted or skipped tests, packages that do not exist, leaked secrets, hidden agent instructions, risky MCP servers and out-of-scope edits, with the exact line as evidence and a signed receipt. Free for public repositories. https://euklo.com/isoklo",
+  "description": "Your unit tests passed. The agent deleted the assertions. Isoklo blocks it in 2 seconds. A deterministic merge gate for AI-written pull requests: 62 fixed rules, no model, no YAML. It blocks deleted or skipped tests, packages that do not exist, leaked secrets, hidden agent instructions, risky MCP servers and out-of-scope edits, with the exact line as evidence and a signed receipt. Free for public repositories. Demo, rules and pricing: euklo.com/isoklo",
   "hook_attributes": {
     "url": "https://isoklo-github-app.YOUR-SUBDOMAIN.workers.dev/webhooks/github",
     "active": true

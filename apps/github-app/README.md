@@ -100,7 +100,7 @@ After installing, GitHub sends people to the setup URL with `installation_id` an
 reads them and shows an "Isoklo is on" note at its setup section, with the one step left: require the `isoklo` check
 in a ruleset. Without those parameters, visitors see the normal page.
 
-The description is plain text (GitHub does not render Markdown there), 976 characters. Paste it as it is:
+The description is plain text (GitHub does not render Markdown there), 968 characters. It names the site without https:// so nothing turns it into a bracketed link. Paste it as it is:
 
 ```text
 Your unit tests passed. The agent deleted the assertions. Isoklo blocks it in 2 seconds.
@@ -111,13 +111,18 @@ You get an "isoklo" check with one annotation per line, one summary comment that
 
 After installing, require the "isoklo" check in Settings > Rules > Rulesets so GitHub refuses to merge until it passes. Maintainers accept a finding with /isoklo waive <rule-id> <reason>.
 
-Free for every public repository and up to 2 private ones. Team: $29 a month per GitHub organisation. Demo, rules and pricing: https://euklo.com/isoklo
+Free for every public repository and up to 2 private ones. Team: $29 a month per GitHub organisation. Demo, rules and pricing: euklo.com/isoklo
 ```
 
 The App page has no room for screenshots, a long README or a pricing tab. A **GitHub Marketplace listing** does:
 a full Markdown description, screenshots, plans with prices, and installs and upgrades through GitHub billing, which
 this Worker already handles (`marketplace_purchase` events; see [GitHub Marketplace](#github-marketplace)). Once the
 listing is approved, point `UPGRADE_URL` at it.
+
+**[MARKETPLACE_LISTING.md](MARKETPLACE_LISTING.md)** has the whole listing ready to paste: every description field
+(checked against GitHub's lengths), the contact links, the Free plan, the webhook settings, and a step-by-step checklist.
+Its images are in [`marketplace-assets/`](marketplace-assets/): the logo, the 965 × 482 feature card and five
+1600 × 1000 screenshots, rebuilt with `node scripts/marketplace-assets.mjs <launch screenshots folder>`.
 
 ## Turn on billing
 
@@ -139,12 +144,15 @@ read. The old plan name `pro` is read as team.
 
 ### GitHub Marketplace
 
-1. On the app's page: **Marketplace listing** → create the listing, with plans named **Free**, **Team** and
-   **Enterprise** (or map other names with `MARKETPLACE_PLAN_MAP = '{"Business": "team"}'`, by name or plan id). A paid
-   plan with a name the app does not know is read as team, never as free.
-2. GitHub sends `marketplace_purchase` events (purchased, changed, cancelled) to the app's normal webhook; the app
-   records the plan. Nothing else to configure. Submit the listing for review when ready to charge.
-3. Set `UPGRADE_URL = "https://github.com/marketplace/<slug>"` and `BILLING_MODE = "on"`, then deploy.
+1. Create the listing from [MARKETPLACE_LISTING.md](MARKETPLACE_LISTING.md), starting with a **Free** plan. Paid plans
+   need at least 100 installations, publisher verification, and monthly and annual prices; then add **Team** (and
+   **Enterprise**), or map other names with `MARKETPLACE_PLAN_MAP = '{"Business": "team"}'`, by name or plan id. A
+   paid plan with a name the app does not know is read as team, never as free.
+2. In the listing's **Webhook** section, set the payload URL to `https://<worker>/webhooks/github` with the App's
+   webhook secret. GitHub then sends `marketplace_purchase` events (purchased, changed, cancelled, pending changes),
+   and the app records the plan.
+3. Once the listing is live, set `UPGRADE_URL = "https://github.com/marketplace/<slug>"` and, when you are ready to
+   enforce plans, `BILLING_MODE = "on"`; then deploy.
 
 ### Stripe
 
