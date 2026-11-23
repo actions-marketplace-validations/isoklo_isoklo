@@ -20,7 +20,7 @@ function repo(files) {
 }
 
 function doctor(dir, ...flags) {
-  const r = spawnSync(process.execPath, [CLI, "doctor", dir, ...flags], { encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } });
+  const r = spawnSync(process.execPath, [CLI, "doctor", dir, ...flags], { encoding: "utf8", env: { ...process.env, NO_COLOR: "1", GIT_CEILING_DIRECTORIES: tmpdir() } });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 

@@ -1,0 +1,18 @@
+{
+  "name": "Isoklo",
+  "url": "https://github.com/isoklo/isoklo",
+  "description": "Proof before merge. A deterministic merge gate for AI-written pull requests: weakened tests, invented packages, leaked secrets, injected agent instructions, risky MCP servers and out-of-scope edits. No workflow file needed.",
+  "hook_attributes": {
+    "url": "https://isoklo-github-app.YOUR-SUBDOMAIN.workers.dev/webhooks/github",
+    "active": true
+  },
+  "redirect_url": "http://localhost:3999/callback",
+  "public": true,
+  "default_permissions": {
+    "checks": "write",
+    "contents": "read",
+    "pull_requests": "write",
+    "metadata": "read"
+  },
+  "default_events": ["pull_request", "check_run", "check_suite"]
+}

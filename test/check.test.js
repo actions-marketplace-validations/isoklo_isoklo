@@ -50,7 +50,8 @@ function pr(t, base, change) {
 function check(dir, ...flags) {
   const r = spawnSync(process.execPath, [CLI, "check", dir, ...flags], {
     encoding: "utf8",
-    env: { ...process.env, NO_COLOR: "1", GITHUB_BASE_REF: "" },
+    // The ceiling stops git from finding a repository above the temp folder (some home folders are git repos).
+    env: { ...process.env, NO_COLOR: "1", GITHUB_BASE_REF: "", GITHUB_ACTIONS: "", GIT_CEILING_DIRECTORIES: tmpdir() },
   });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }

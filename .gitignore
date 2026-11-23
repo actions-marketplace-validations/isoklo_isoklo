@@ -5,3 +5,10 @@ __pycache__/
 node_modules/
 dist/
 *.tgz
+# GitHub App: local secrets and build output (never committed)
+.dev.vars
+.secrets/
+.wrangler/
+# Sample outputs from `isoklo report`
+isoklo-report.html
+isoklo-receipt.json

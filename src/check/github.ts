@@ -8,6 +8,7 @@
 import type { Finding } from "./types.js";
 import type { CheckSummary } from "./report.js";
 import { verdictOf } from "./report.js";
+import { cell as mdCell, code as mdCode } from "../output/markdown.js";
 
 /** Escaping for the message part of a workflow command. */
 export const escapeData = (s: string) => s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
@@ -40,9 +41,9 @@ export function annotations(s: CheckSummary): string[] {
   return out;
 }
 
-/** Markdown cells must not break the table: escape pipes, and keep each cell on one line. */
-const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
-const code = (s: string) => "`" + s.replace(/`/g, "ˋ") + "`";
+/** Markdown cells must not break the table, and repository text must stay inert: the same escaping as the App's comment. */
+const cell = mdCell;
+const code = mdCode;
 const ICON = { blocked: "✕ blocked", review: "! review", info: "· info" } as const;
 
 export function jobSummary(s: CheckSummary): string {

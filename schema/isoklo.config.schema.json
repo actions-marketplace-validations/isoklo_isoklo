@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unpkg.com/isoklo/schema/isoklo.config.schema.json",
+  "title": "Isoklo policy (isoklo.config.json)",
+  "description": "Optional policy for the Isoklo merge gate. When checking a change, Isoklo reads this file from the base commit, never from the change itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Which files a change may touch.",
+      "properties": {
+        "allow": { "type": "array", "items": { "type": "string" }, "description": "Every changed file must match one of these globs. A pull request body can narrow this further with `isoklo-scope:`." },
+        "deny": { "type": "array", "items": { "type": "string" }, "description": "No changed file may match these globs (scope/forbidden-path)." },
+        "maxFiles": { "type": "integer", "minimum": 1, "description": "Most files one change may touch (scope/too-many-files)." },
+        "sensitive": {
+          "description": "Sensitive areas, by name, for scope/sensitive-zone. Omit for the built-in defaults (auth, billing, infrastructure as code, secrets); false turns the check off. Add your own (for example migrations) by name.",
+          "oneOf": [
+            { "const": false },
+            { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }
+          ]
+        }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "description": "Per-rule level by rule id (run `npx isoklo rules`).",
+      "additionalProperties": { "enum": ["blocked", "review", "info", "off"] }
+    },
+    "ignorePaths": { "type": "array", "items": { "type": "string" }, "description": "Globs the content rules (secrets, hidden Unicode, remote code, suppressions) skip, for fixtures and samples." },
+    "online": { "type": "boolean", "default": true, "description": "Look new packages up on npm and PyPI." },
+    "baseline": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-f]{16}$" }, "description": "Fingerprints of accepted findings (written by `npx isoklo init --config`). They report as info." },
+    "trustedRegistries": { "type": "array", "items": { "type": "string" }, "description": "Extra hosts lockfiles may install from." },
+    "trustedMcpPackages": { "type": "array", "items": { "type": "string" }, "description": "Extra MCP server packages or image prefixes to treat as from a verified publisher." }
+  }
+}

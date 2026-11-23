@@ -6,7 +6,7 @@
 
 const TEST_PATH: readonly RegExp[] = [
   /(^|\/)(__tests__|tests?|spec|specs|e2e)\//i,
-  /\.(test|spec)\.[cm]?[jt]sx?$/i,
+  /\.(test|spec|e2e|cy|it|integration)\.[cm]?[jt]sx?$/i, // also Playwright *.e2e.ts and Cypress *.cy.ts
   /(^|\/)test_[^/]+\.py$/i,
   /_test\.(py|go|rb|exs?)$/i,
   /(^|\/)[^/]*Tests?\.(java|kt|cs|swift)$/,
@@ -68,7 +68,7 @@ const TAUTOLOGY: readonly RegExp[] = [
 export const isTautology = (line: string) => TAUTOLOGY.some((re) => re.test(line));
 
 /** The reviewable escape hatch: a comment in the changed test file saying why the change is intentional. */
-export const ALLOW_MARKER = /isoklo:\s*allow-test-change\b\s*[:\-]?\s*(.*)$/;
+export const ALLOW_MARKER = /isoklo:\s*allow-test-change\b\s*[:-]?\s*(.*)$/;
 
 /** Two lines are "the same" if they differ only in whitespace or a trailing ; or , (reformatting, not a change). */
 export const normalize = (line: string) => line.trim().replace(/\s+/g, " ").replace(/[;,]\s*$/, "");

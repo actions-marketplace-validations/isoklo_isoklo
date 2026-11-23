@@ -1,5 +1,5 @@
 name: Isoklo
-description: 'Proof before merge. Blocks AI agent PRs that weaken tests, add fake packages, or escalate configs.'
+description: 'Proof before merge. Blocks AI agent PRs that weaken tests, add fake packages, leak secrets or escalate configs.'
 author: Isoklo
 branding:
   icon: check-circle
@@ -20,6 +20,14 @@ inputs:
     default: "false"
   allow-config-change:
     description: "A reason that turns blocked agent or CI configuration changes into review. Set it only from something agents cannot control, such as a label only maintainers can apply."
+    required: false
+    default: ""
+  scope:
+    description: "Globs this change may touch, separated by commas or spaces (files outside are blocked). A pull request body can also declare `isoklo-scope: src/cart/**`."
+    required: false
+    default: ""
+  sarif:
+    description: "Also write SARIF 2.1.0 to this path, for github/codeql-action/upload-sarif (Security tab)."
     required: false
     default: ""
 
@@ -45,6 +53,8 @@ runs:
         ISOKLO_BASE: ${{ inputs.base }}
         ISOKLO_OFFLINE_INPUT: ${{ inputs.offline }}
         ISOKLO_ALLOW_CONFIG: ${{ inputs.allow-config-change }}
+        ISOKLO_SCOPE: ${{ inputs.scope }}
+        ISOKLO_SARIF: ${{ inputs.sarif }}
         ISOKLO_ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
@@ -52,6 +62,9 @@ runs:
         if [ -n "$ISOKLO_BASE" ]; then args+=(--base "$ISOKLO_BASE"); fi
         if [ "$ISOKLO_OFFLINE_INPUT" = "true" ]; then args+=(--offline); fi
         if [ -n "$ISOKLO_ALLOW_CONFIG" ]; then args+=(--allow-config-change "$ISOKLO_ALLOW_CONFIG"); fi
+        if [ -n "$ISOKLO_SARIF" ]; then args+=(--sarif "$ISOKLO_SARIF"); fi
+        # set -f: the globs go to Isoklo as written, not expanded against the runner's files.
+        set -f; for glob in ${ISOKLO_SCOPE//,/ }; do args+=(--scope "$glob"); done; set +f
         if [ -n "$ISOKLO_VERSION" ]; then
           if ! [[ "$ISOKLO_VERSION" =~ ^[0-9A-Za-z.+-]+$ ]]; then
             echo "::error title=Isoklo could not run::version input is not a valid version: nothing was approved."

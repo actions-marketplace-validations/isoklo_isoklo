@@ -1,0 +1,435 @@
+{
+  "schema": "https://isoklo.dev/schemas/receipt/v1",
+  "tool": "isoklo",
+  "engineVersion": "0.2.0",
+  "mode": "check",
+  "repository": "acme/invoice-kit",
+  "base": {
+    "ref": "main",
+    "sha": "bd07def2d2cc74da3b4232cc0639828b302e42af"
+  },
+  "head": {
+    "ref": "HEAD",
+    "sha": "2cb4d3f421ba403e6bb256086c00d085af70d142"
+  },
+  "createdAt": "2026-11-22T00:28:57.283Z",
+  "policy": {
+    "source": null,
+    "sha256": null
+  },
+  "rules": [
+    {
+      "id": "agent/hidden-unicode",
+      "version": 1
+    },
+    {
+      "id": "agent/prompt-injection",
+      "version": 1
+    },
+    {
+      "id": "agent/approvals-disabled",
+      "version": 1
+    },
+    {
+      "id": "agent/permission-wide",
+      "version": 1
+    },
+    {
+      "id": "agent/permission-added",
+      "version": 1
+    },
+    {
+      "id": "agent/deny-removed",
+      "version": 1
+    },
+    {
+      "id": "agent/permission-mode",
+      "version": 1
+    },
+    {
+      "id": "agent/mcp-all-enabled",
+      "version": 1
+    },
+    {
+      "id": "agent/hook-added",
+      "version": 1
+    },
+    {
+      "id": "agent/hook-removed",
+      "version": 1
+    },
+    {
+      "id": "agent/instructions-changed",
+      "version": 1
+    },
+    {
+      "id": "agent/settings-changed",
+      "version": 1
+    },
+    {
+      "id": "agent/config-unreadable",
+      "version": 1
+    },
+    {
+      "id": "mcp/server-added",
+      "version": 1
+    },
+    {
+      "id": "mcp/server-changed",
+      "version": 1
+    },
+    {
+      "id": "mcp/server-env-changed",
+      "version": 1
+    },
+    {
+      "id": "mcp/server-removed",
+      "version": 1
+    },
+    {
+      "id": "mcp/unpinned-server",
+      "version": 1
+    },
+    {
+      "id": "mcp/plaintext-secret",
+      "version": 1
+    },
+    {
+      "id": "mcp/dangerous-server",
+      "version": 1
+    },
+    {
+      "id": "tamper/test-file-deleted",
+      "version": 1
+    },
+    {
+      "id": "tamper/assertions-removed",
+      "version": 1
+    },
+    {
+      "id": "tamper/tautology",
+      "version": 1
+    },
+    {
+      "id": "tamper/test-disabled",
+      "version": 1
+    },
+    {
+      "id": "tamper/check-disabled-file",
+      "version": 1
+    },
+    {
+      "id": "tamper/suppression-added",
+      "version": 1
+    },
+    {
+      "id": "tamper/security-suppression",
+      "version": 1
+    },
+    {
+      "id": "tamper/type-check-weakened",
+      "version": 1
+    },
+    {
+      "id": "tamper/lint-config-weakened",
+      "version": 1
+    },
+    {
+      "id": "tamper/coverage-lowered",
+      "version": 1
+    },
+    {
+      "id": "tamper/test-script-weakened",
+      "version": 1
+    },
+    {
+      "id": "tamper/gitignore-weakened",
+      "version": 1
+    },
+    {
+      "id": "tamper/isoklo-config-changed",
+      "version": 1
+    },
+    {
+      "id": "tamper/isoklo-removed-from-ci",
+      "version": 1
+    },
+    {
+      "id": "tamper/workflow-changed",
+      "version": 1
+    },
+    {
+      "id": "tamper/ci-changed",
+      "version": 1
+    },
+    {
+      "id": "tamper/codeowners-changed",
+      "version": 1
+    },
+    {
+      "id": "deps/package-does-not-exist",
+      "version": 1
+    },
+    {
+      "id": "deps/package-maybe-private",
+      "version": 1
+    },
+    {
+      "id": "deps/package-brand-new",
+      "version": 1
+    },
+    {
+      "id": "deps/package-unverified",
+      "version": 1
+    },
+    {
+      "id": "deps/packages-not-verified",
+      "version": 1
+    },
+    {
+      "id": "deps/manifest-unreadable",
+      "version": 1
+    },
+    {
+      "id": "deps/install-script",
+      "version": 1
+    },
+    {
+      "id": "deps/typosquat",
+      "version": 1
+    },
+    {
+      "id": "deps/lockfile-untrusted-source",
+      "version": 1
+    },
+    {
+      "id": "deps/lifecycle-script",
+      "version": 1
+    },
+    {
+      "id": "deps/registry-changed",
+      "version": 1
+    },
+    {
+      "id": "sec/secret-leaked",
+      "version": 1
+    },
+    {
+      "id": "sec/env-file-committed",
+      "version": 1
+    },
+    {
+      "id": "sec/remote-code-exec",
+      "version": 1
+    },
+    {
+      "id": "sec/env-exfiltration",
+      "version": 1
+    },
+    {
+      "id": "sec/exfil-endpoint",
+      "version": 1
+    },
+    {
+      "id": "sec/prt-head-checkout",
+      "version": 1
+    },
+    {
+      "id": "sec/workflow-injection",
+      "version": 1
+    },
+    {
+      "id": "sec/workflow-risk",
+      "version": 1
+    },
+    {
+      "id": "sec/workflow-secrets",
+      "version": 1
+    },
+    {
+      "id": "scope/out-of-scope",
+      "version": 1
+    },
+    {
+      "id": "scope/forbidden-path",
+      "version": 1
+    },
+    {
+      "id": "scope/too-many-files",
+      "version": 1
+    },
+    {
+      "id": "scope/sensitive-zone",
+      "version": 1
+    },
+    {
+      "id": "scope/lockfile-without-manifest",
+      "version": 1
+    }
+  ],
+  "verdict": "blocked",
+  "counts": {
+    "byLevel": {
+      "blocked": 13,
+      "review": 4,
+      "info": 1
+    },
+    "bySeverity": {
+      "critical": 5,
+      "high": 8,
+      "medium": 4,
+      "info": 1
+    }
+  },
+  "findings": [
+    {
+      "ruleId": "agent/hidden-unicode",
+      "level": "blocked",
+      "severity": "critical",
+      "path": "CLAUDE.md",
+      "line": 3,
+      "fingerprint": "2952c5b8a35e1bc2"
+    },
+    {
+      "ruleId": "mcp/plaintext-secret",
+      "level": "blocked",
+      "severity": "critical",
+      "path": ".mcp.json",
+      "line": 3,
+      "fingerprint": "f12889313d2cc0d5"
+    },
+    {
+      "ruleId": "deps/lifecycle-script",
+      "level": "blocked",
+      "severity": "critical",
+      "path": "package.json",
+      "line": 8,
+      "fingerprint": "13322793cef17c7d"
+    },
+    {
+      "ruleId": "sec/secret-leaked",
+      "level": "blocked",
+      "severity": "critical",
+      "path": ".mcp.json",
+      "line": 10,
+      "fingerprint": "e0104653311af84c"
+    },
+    {
+      "ruleId": "sec/env-exfiltration",
+      "level": "blocked",
+      "severity": "critical",
+      "path": "src/telemetry.ts",
+      "line": 1,
+      "fingerprint": "8870eca77e0e9d14"
+    },
+    {
+      "ruleId": "tamper/assertions-removed",
+      "level": "blocked",
+      "severity": "high",
+      "path": "test/invoice/total.test.ts",
+      "line": 5,
+      "fingerprint": "8ac93a474d200bae"
+    },
+    {
+      "ruleId": "tamper/test-disabled",
+      "level": "blocked",
+      "severity": "high",
+      "path": "test/invoice/total.test.ts",
+      "line": 3,
+      "fingerprint": "c0697fade44380c9"
+    },
+    {
+      "ruleId": "mcp/server-added",
+      "level": "blocked",
+      "severity": "high",
+      "path": ".mcp.json",
+      "line": 3,
+      "fingerprint": "96a709308d8dfbe8"
+    },
+    {
+      "ruleId": "mcp/unpinned-server",
+      "level": "blocked",
+      "severity": "high",
+      "path": ".mcp.json",
+      "line": 3,
+      "fingerprint": "2d397f9b1d3b5b6c"
+    },
+    {
+      "ruleId": "tamper/test-script-weakened",
+      "level": "blocked",
+      "severity": "high",
+      "path": "package.json",
+      "line": 5,
+      "fingerprint": "21ffded72a34be84"
+    },
+    {
+      "ruleId": "tamper/type-check-weakened",
+      "level": "blocked",
+      "severity": "high",
+      "path": "tsconfig.json",
+      "line": 2,
+      "fingerprint": "2aeba722ff9068ac"
+    },
+    {
+      "ruleId": "sec/remote-code-exec",
+      "level": "blocked",
+      "severity": "high",
+      "path": "package.json",
+      "line": 8,
+      "fingerprint": "35987ea2c546af84"
+    },
+    {
+      "ruleId": "sec/exfil-endpoint",
+      "level": "blocked",
+      "severity": "high",
+      "path": "src/telemetry.ts",
+      "line": 1,
+      "fingerprint": "9aa845e578247dc2"
+    },
+    {
+      "ruleId": "agent/instructions-changed",
+      "level": "review",
+      "severity": "medium",
+      "path": "CLAUDE.md",
+      "line": 3,
+      "fingerprint": "1df1f2a5891f5df6"
+    },
+    {
+      "ruleId": "tamper/suppression-added",
+      "level": "review",
+      "severity": "medium",
+      "path": "src/invoice/total.ts",
+      "line": 1,
+      "fingerprint": "0764287a03960128"
+    },
+    {
+      "ruleId": "scope/sensitive-zone",
+      "level": "review",
+      "severity": "medium",
+      "path": "src/auth/session.ts",
+      "line": 1,
+      "fingerprint": "0c00f8944fd9ada2"
+    },
+    {
+      "ruleId": "scope/sensitive-zone",
+      "level": "review",
+      "severity": "medium",
+      "path": "src/invoice/total.ts",
+      "line": 1,
+      "fingerprint": "ca4c2982b3d64bce"
+    },
+    {
+      "ruleId": "deps/packages-not-verified",
+      "level": "info",
+      "severity": "info",
+      "path": "package.json",
+      "line": 12,
+      "fingerprint": "3e0f9cedc9426675"
+    }
+  ],
+  "integrity": {
+    "algorithm": "sha256",
+    "canonicalization": "RFC 8785 (JCS)",
+    "digest": "b2024f8a4ca229d181ce435bda1b1258f895c745ee19287dae203db511f54deb"
+  }
+}
