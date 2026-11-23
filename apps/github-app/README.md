@@ -81,6 +81,44 @@ Upgrading an existing App to 0.3: in the App's settings, add **Repository permis
 subscribe to **Issue comment** events, then deploy. Each installation's owner is asked to accept the new permission;
 until they do, everything else keeps working and `/isoklo waive` comments simply do not arrive.
 
+## The App's public page
+
+`github.com/apps/isoklo` shows the App's name, logo, description and homepage, and its install button. New
+registrations (`npm run register`) take all of this from `app-manifest.json`. For an App that already exists, such as
+the live one (App id 5884420), paste the values below into **GitHub → Settings → Developer settings → GitHub Apps →
+Isoklo**:
+
+| Where in the App's settings | Field | Value |
+|---|---|---|
+| General → Basic information | **Homepage URL** | `https://euklo.com/isoklo` |
+| General → Basic information | **Description** | the text block below |
+| General → Post installation | **Setup URL** | `https://euklo.com/isoklo/#setup` |
+| General → Post installation | **Redirect on update** | off |
+| General → Post installation | **Request user authorization (OAuth) during installation** | off (it would replace the setup URL) |
+
+After installing, GitHub sends people to the setup URL with `installation_id` and `setup_action` added. The Isoklo page
+reads them and shows an "Isoklo is on" note at its setup section, with the one step left: require the `isoklo` check
+in a ruleset. Without those parameters, visitors see the normal page.
+
+The description is plain text (GitHub does not render Markdown there), 976 characters. Paste it as it is:
+
+```text
+Your unit tests passed. The agent deleted the assertions. Isoklo blocks it in 2 seconds.
+
+Isoklo is a deterministic merge gate for AI-written pull requests. On every pull request it runs 62 fixed rules, with no model and no YAML, and blocks deleted or skipped tests, packages that do not exist on npm or PyPI, leaked secrets, hidden agent instructions, risky MCP servers and edits outside the task, with the exact line as evidence.
+
+You get an "isoklo" check with one annotation per line, one summary comment that updates in place, and an Ed25519-signed evidence receipt anyone can verify. Read-only access to code; no code is stored.
+
+After installing, require the "isoklo" check in Settings > Rules > Rulesets so GitHub refuses to merge until it passes. Maintainers accept a finding with /isoklo waive <rule-id> <reason>.
+
+Free for every public repository and up to 2 private ones. Team: $29 a month per GitHub organisation. Demo, rules and pricing: https://euklo.com/isoklo
+```
+
+The App page has no room for screenshots, a long README or a pricing tab. A **GitHub Marketplace listing** does:
+a full Markdown description, screenshots, plans with prices, and installs and upgrades through GitHub billing, which
+this Worker already handles (`marketplace_purchase` events; see [GitHub Marketplace](#github-marketplace)). Once the
+listing is approved, point `UPGRADE_URL` at it.
+
 ## Turn on billing
 
 Billing is a switch. With `BILLING_MODE = "off"` (the default) every repository gets every feature, which is the

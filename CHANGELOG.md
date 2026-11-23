@@ -41,6 +41,9 @@ All notable changes to Isoklo are listed here. Versions follow [Semantic Version
   exist yet).
 - `--help` lists every command and links to the GitHub App, https://euklo.com/isoklo and the source. The npm
   `homepage` is https://euklo.com/isoklo.
+- App manifest: homepage https://euklo.com/isoklo, setup URL https://euklo.com/isoklo/#setup (the page shows an
+  "Isoklo is on" note with the last step after an install), and the launch description. The App README has the
+  values to paste into an existing App's settings.
 
 ## 0.2.0 · 2026-11-22 (Isoklo v2)
 
